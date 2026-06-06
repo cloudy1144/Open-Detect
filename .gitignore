@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.npz
+data/dataset/*.npz
+train_*.log
+.DS_Store
