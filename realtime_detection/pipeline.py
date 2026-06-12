@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from typing import Any, Optional
 
 from .alert_manager import Alert, AlertManager
+from .dynamic_threshold import DynamicThresholdManager, ThresholdConfig
 from .exporter import export_abnormal_flow
 from .flow_manager import FlowData, FlowManager
+from .logger import get_logger
 from .model_adapter import InferenceConfig, OpenDetectInferenceAdapter
 from .preprocess import build_gray_image
+
+logger = get_logger()
 
 
 class DetectionPipeline:
@@ -25,6 +30,8 @@ class DetectionPipeline:
         export_dir: str = "./abnormal_flows",
         enable_export: bool = True,
         device: Optional[str] = None,
+        enable_dynamic_threshold: bool = False,
+        baseline_kl_distances: Optional[list[float]] = None,
     ):
         self.flow_manager = FlowManager(expire_minutes=expire_minutes)
         self.alert_manager = AlertManager()
@@ -39,15 +46,36 @@ class DetectionPipeline:
         )
         self.export_dir = export_dir
         self.enable_export = enable_export
+        
+        # Dynamic threshold integration
+        self.threshold_manager = DynamicThresholdManager(
+            ThresholdConfig(baseline_kl_distances=baseline_kl_distances or [])
+        )
+        self.threshold_manager.register_update_callback(self._on_threshold_update)
+        self.enable_dynamic_threshold = enable_dynamic_threshold
+
+    def _on_threshold_update(self, new_threshold: float):
+        """Update predictor threshold when dynamic threshold changes."""
+        self.predictor.config.threshold = new_threshold
+        logger.info(f"Dynamic threshold updated: {new_threshold:.4f}")
+
+    def update_dynamic_threshold(self, baseline_kl_distances: list[float]) -> float:
+        """Update dynamic threshold using baseline data from teammate 2."""
+        self.threshold_manager.update_baseline(baseline_kl_distances)
+        return self.threshold_manager.get_threshold()
+
+    def get_threshold_statistics(self) -> dict:
+        """Get current dynamic threshold statistics."""
+        return self.threshold_manager.get_statistics()
 
     def register_alert_callback(self, callback):
         """Forward alert callbacks to the alert manager."""
-
         self.alert_manager.register_alert_callback(callback)
 
     def process_captured_flow(self, flow: FlowData) -> FlowData:
         """Process a flow created by teammate 1 or by local mock data."""
-
+        start_time = time.time()
+        
         self.flow_manager.add_flow(flow)
         if self.flow_manager.is_flow_processed(flow.flow_id):
             return flow
@@ -72,9 +100,15 @@ class DetectionPipeline:
         )
 
         alert = self.alert_manager.trigger_alert(flow, inference_result)
-        if alert is not None and export_path is not None:
+        if alert is not None:
             flow.metadata["alert_id"] = alert.alert_id
-            flow.metadata["export_path"] = export_path
+            logger.log_alert(asdict(alert))
+            if export_path is not None:
+                flow.metadata["export_path"] = export_path
+        
+        # Log processing time
+        processing_time_ms = (time.time() - start_time) * 1000
+        logger.log_flow_processed(flow.flow_id, flow.is_abnormal, processing_time_ms)
 
         return flow
 
@@ -91,7 +125,6 @@ class DetectionPipeline:
         metadata: Optional[dict[str, Any]] = None,
     ) -> FlowData:
         """Create a FlowData record from raw teammate 1 style inputs."""
-
         flow = FlowData(
             flow_id=flow_id,
             src_ip=src_ip,
@@ -113,12 +146,14 @@ class DetectionPipeline:
 
     def snapshot(self) -> dict[str, Any]:
         """Return a simple serializable snapshot for UI or debugging."""
-
         flows = [asdict(flow) for flow in self.get_flow_history()]
         alerts = [asdict(alert) for alert in self.get_alert_history()]
+        threshold_stats = self.get_threshold_statistics()
+        
         return {
             "flows": flows,
             "alerts": alerts,
             "flow_count": len(flows),
             "alert_count": len(alerts),
+            "threshold_statistics": threshold_stats,
         }
