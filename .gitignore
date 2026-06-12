@@ -4,3 +4,46 @@ __pycache__/
 data/dataset/*.npz
 train_*.log
 .DS_Store
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# IDE/editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Scapy/pcap export dir
+abnormal_flows/
+
+# Model checkpoints and saved weights (optional)
+save_model/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Others
+*.pem
+*.key
+
+# Explicitly ignore VSCode settings file
+.vscode/settings.json
