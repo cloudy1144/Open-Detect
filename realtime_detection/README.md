@@ -39,6 +39,25 @@ python realtime_detection_demo.py --model save_model/mixed_44_split_0.pt --no-ex
 
 如果后续队员1已经能提供真实流数据，只需要把 `FlowData` 交给 `DetectionPipeline.process_captured_flow()`，下游逻辑不用改。
 
+## FlowData 
+
+- 核心数据结构定义在 `realtime_detection/flow_manager.py` 的 `FlowData` 类里。
+- 统一接入入口在 `realtime_detection/pipeline.py` 的 `DetectionPipeline.process_captured_flow(flow)`。
+- 灰度图转换、流 ID 生成和 mock 流样例在 `realtime_detection/preprocess.py`。
+
+`FlowData` 的关键字段如下：
+
+- `flow_id`、`src_ip`、`dst_ip`、`src_port`、`dst_port`、`protocol`、`timestamp`：五元组与时间基信息。
+- `packets_data`：抓包数据字节序列，建议先保留前 10 包或前若干字节用于预处理。
+- `gray_img`：32 x 32 灰度图，若为空会由链路自动生成。
+- `inference_result`、`is_abnormal`、`export_path`、`metadata`：推理结果、告警和导出信息。
+
+## 给队员 1
+
+这套实时检测链路已经完成，你只需要把抓包结果整理成标准 `FlowData` 结构，推送给我们的 `DetectionPipeline.process_captured_flow()`，就能自动走完整个检测、告警和导出流程；灰度图转换和流 ID 构造直接复用 `preprocess.py` 里的规则，保证格式统一。
+
+你负责的部分是：拆分五元组流、提取前 10 包字节、生成 32×32 灰度图并组装 `FlowData`；完成后我们一起联调，并采集 200 条正常流量给队员 2 做动态阈值基线。只要数据格式对齐，我这边的推理、告警和导出逻辑都已经封装好，不需要再改代码。
+
 ## 接入约定
 
 - 队员1负责产出 `FlowData` 或等价结构。
