@@ -97,7 +97,7 @@ class InferenceConfig:
     model_path: str = "save_model/mixed_44_split_0.pt"
     threshold: float = 2.24                  # 欧氏距离阈值 (≈ sqrt(5.0))
     top_k: int = 1
-    temperature: float = 1.0
+    temperature: float = 4.0
     device: Optional[str] = None
     class_thresholds: dict[int, float] | None = None  # 类特定阈值, 如 {31: 2.5}
     recon_threshold: float = 0.15            # 重构MSE阈值, 0=关闭此检查

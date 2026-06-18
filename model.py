@@ -17,7 +17,8 @@ class OpenDetectNet(nn.Module):
         self.temp_inter = temp_inter
         self.temp_intra = temp_intra
         self.encoder, self.decoder = net(self.arch, self.channel, self.latent_dim)
-        self.prototypes = nn.Parameter(torch.randn(self.n_classes, self.latent_dim).cuda(), requires_grad=True)
+        # 不在这里指定设备，交由 model.to(device) 处理
+        self.prototypes = nn.Parameter(torch.randn(self.n_classes, self.latent_dim), requires_grad=True)
         if init:
             nn.init.kaiming_normal_(self.prototypes)
 

@@ -4,10 +4,10 @@
 
 model:
   path: save_model/mixed_44_split_0.pt
-  device: cuda           # cuda | cpu | auto
-  threshold: 2.24         # euclidean distance threshold for unknown detection
+  device: auto           # cuda | cpu | auto
+  threshold: 4.0          # euclidean distance threshold for unknown detection (default 4.0)
   top_k: 1                # number of top match results to return
-  temperature: 1.0        # softmax temperature for confidence
+  temperature: 4.0        # softmax temperature for confidence (sq-distance based)
   recon_threshold: 0.15   # reconstruction error threshold (MSE)
   bg_ratio: 0.7           # commit_ratio threshold (> this → unknown)
   class_thresholds: {}    # per-class overrides, e.g. {31: 2.5, 15: 1.8}
