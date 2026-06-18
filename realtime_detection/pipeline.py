@@ -7,12 +7,16 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from .alert_manager import Alert, AlertManager
+from .config import get_pipeline_config, get_model_config
 from .dynamic_threshold import DynamicThresholdManager, ThresholdConfig
 from .exporter import export_abnormal_flow
+from .flow_correlation import FlowCorrelationEngine, CorrelationAlert
 from .flow_manager import FlowData, FlowManager
+from .health import HealthChecker, MetricsCollector
 from .logger import get_logger
 from .model_adapter import InferenceConfig, OpenDetectInferenceAdapter
 from .preprocess import build_gray_image
+from .protocol_parser import extract_protocol_metadata
 
 logger = get_logger()
 
@@ -23,18 +27,34 @@ class DetectionPipeline:
     def __init__(
         self,
         model_path: str = "save_model/mixed_44_split_0.pt",
-        threshold: float = 5.0,
+        threshold: float = 2.24,
         top_k: int = 1,
         temperature: float = 1.0,
         expire_minutes: int = 5,
+        cooldown_seconds: int = 60,
         export_dir: str = "./abnormal_flows",
         enable_export: bool = True,
         device: Optional[str] = None,
         enable_dynamic_threshold: bool = False,
         baseline_kl_distances: Optional[list[float]] = None,
+        enable_correlation: bool = True,
+        enable_health: bool = True,
+        class_thresholds: dict[int, float] | None = None,
+        recon_threshold: float = 0.15,
+        bg_ratio: float = 0.7,
+        db_path: Optional[str] = None,
     ):
-        self.flow_manager = FlowManager(expire_minutes=expire_minutes)
-        self.alert_manager = AlertManager()
+        # Load defaults from config.yaml for any unspecified parameter
+        try:
+            pipe_cfg = get_pipeline_config()
+            model_cfg = get_model_config()
+            if db_path is None:
+                db_path = pipe_cfg.get("db_path") or None
+        except Exception:
+            pipe_cfg, model_cfg = {}, {}
+
+        self.flow_manager = FlowManager(expire_minutes=expire_minutes, cooldown_seconds=cooldown_seconds)
+        self.alert_manager = AlertManager(db_path=db_path)
         self.predictor = OpenDetectInferenceAdapter(
             InferenceConfig(
                 model_path=model_path,
@@ -42,17 +62,35 @@ class DetectionPipeline:
                 top_k=top_k,
                 temperature=temperature,
                 device=device,
+                class_thresholds=class_thresholds,
+                recon_threshold=recon_threshold,
+                bg_ratio=bg_ratio,
             )
         )
         self.export_dir = export_dir
         self.enable_export = enable_export
-        
+
         # Dynamic threshold integration
         self.threshold_manager = DynamicThresholdManager(
             ThresholdConfig(baseline_kl_distances=baseline_kl_distances or [])
         )
         self.threshold_manager.register_update_callback(self._on_threshold_update)
         self.enable_dynamic_threshold = enable_dynamic_threshold
+
+        # Multi-flow correlation engine
+        self.correlation_engine = FlowCorrelationEngine() if enable_correlation else None
+        if self.correlation_engine:
+            self.correlation_engine.register_alert_callback(self._on_correlation_alert)
+
+        # Metrics & Health
+        self.metrics = MetricsCollector()
+        self.health_checker: Optional[HealthChecker] = None
+        if enable_health:
+            self.health_checker = HealthChecker(
+                get_status=self._health_status,
+                get_metrics=self.metrics.snapshot,
+            )
+            self.health_checker.start()
 
     def _on_threshold_update(self, new_threshold: float):
         """Update predictor threshold when dynamic threshold changes."""
@@ -75,17 +113,35 @@ class DetectionPipeline:
     def process_captured_flow(self, flow: FlowData) -> FlowData:
         """Process a flow created by teammate 1 or by local mock data."""
         start_time = time.time()
-        
+
         self.flow_manager.add_flow(flow)
         if self.flow_manager.is_flow_processed(flow.flow_id):
+            self.metrics.inc_flows_total()
             return flow
 
         if flow.gray_img is None:
             flow.gray_img = build_gray_image(flow.packets_data)
 
-        inference_result = self.predictor.infer(flow.gray_img)
+        # Extract protocol metadata for alert enrichment
+        try:
+            proto_meta = extract_protocol_metadata(flow)
+            flow.metadata["protocol"] = proto_meta.to_dict()
+        except Exception:
+            pass  # non-critical
+
+        try:
+            inference_result = self.predictor.infer(flow.gray_img)
+        except Exception:
+            self.metrics.inc_inference_errors()
+            flow.metadata["error"] = "inference_failed"
+            return flow
+
+        self.metrics.inc_inference_count()
         flow.inference_result = inference_result
         flow.is_abnormal = bool(inference_result.get("is_abnormal", False))
+
+        if flow.is_abnormal:
+            self.metrics.inc_flows_abnormal()
 
         export_path = None
         if flow.is_abnormal and self.enable_export:
@@ -105,9 +161,18 @@ class DetectionPipeline:
             logger.log_alert(asdict(alert))
             if export_path is not None:
                 flow.metadata["export_path"] = export_path
-        
+
+        # Feed to multi-flow correlation engine
+        if self.correlation_engine:
+            corr_alerts = self.correlation_engine.feed_flow(flow)
+            flow.metadata["correlation_alerts"] = len(corr_alerts)
+            if corr_alerts:
+                self.metrics.inc_correlation_alerts(len(corr_alerts))
+
         # Log processing time
         processing_time_ms = (time.time() - start_time) * 1000
+        self.metrics.record_inference_latency_ms(processing_time_ms)
+        self.metrics.inc_flows_total()
         logger.log_flow_processed(flow.flow_id, flow.is_abnormal, processing_time_ms)
 
         return flow
@@ -149,6 +214,7 @@ class DetectionPipeline:
         flows = [asdict(flow) for flow in self.get_flow_history()]
         alerts = [asdict(alert) for alert in self.get_alert_history()]
         threshold_stats = self.get_threshold_statistics()
+        correlation = self.correlation_engine.snapshot() if self.correlation_engine else {}
         
         return {
             "flows": flows,
@@ -156,4 +222,34 @@ class DetectionPipeline:
             "flow_count": len(flows),
             "alert_count": len(alerts),
             "threshold_statistics": threshold_stats,
+            "correlation": correlation,
         }
+
+    def _health_status(self) -> dict[str, Any]:
+        """Generate health check status for HealthChecker."""
+        return {
+            "model_loaded": self.predictor.model is not None,
+            "device": str(self.predictor.config.device or "auto"),
+            "enable_dynamic_threshold": self.enable_dynamic_threshold,
+            "enable_correlation": self.correlation_engine is not None,
+            "enable_export": self.enable_export,
+        }
+
+    def _on_correlation_alert(self, alert) -> None:
+        """Handle correlation alerts (beaconing, scanning, bidirectional asymmetry)."""
+        logger.warning(
+            f"[CORRELATION] {alert.alert_type}: {alert.description[:200]}",
+            alert_type=alert.alert_type,
+            src_ip=alert.src_ip,
+        )
+        # Also feed back to alert_manager for unified query interface
+        self.alert_manager.trigger_correlation_alert(alert)
+
+    def stop(self) -> None:
+        """Gracefully stop all background threads."""
+        self.flow_manager.stop_cleaner()
+        self.threshold_manager.stop_auto_update()
+        if self.health_checker:
+            self.health_checker.stop()
+        if self.correlation_engine:
+            self.correlation_engine.stop()

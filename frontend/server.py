@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
                 model_path=model_path,
                 threshold=5.0,
                 top_k=3,
-                temperature=1.0,
+                temperature=4.0,
                 expire_minutes=10,
                 enable_export=False,
             )

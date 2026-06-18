@@ -20,9 +20,13 @@ def build_gray_image(packets_data: Iterable[bytes], image_size: int = 32, max_by
 
 
 def build_flow_id(src_ip: str, src_port: int, dst_ip: str, dst_port: int, timestamp: float) -> str:
-    """Construct a stable flow id for deduplication and traceability."""
+    """Construct a stable flow id based on 5-tuple (no timestamp in id).
 
-    time_part = datetime.fromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S_%f")
+    Uses second-level timestamp to distinguish re-connections from the
+    same 5-tuple without creating a new id for every packet burst.
+    Deduplication cooldown is handled by FlowManager.
+    """
+    time_part = datetime.fromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
     return f"{src_ip}:{src_port}-{dst_ip}:{dst_port}-{time_part}"
 
 

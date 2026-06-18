@@ -9,7 +9,11 @@ passes the assembled `FlowData` into the realtime detection pipeline.
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -20,8 +24,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from scapy.all import IP, TCP, UDP, sniff, AsyncSniffer
-import threading
-import signal
 
 from realtime_detection.flow_manager import FlowData
 from realtime_detection.pipeline import DetectionPipeline
@@ -126,6 +128,7 @@ def process_and_maybe_flush(
     pipeline: DetectionPipeline,
     max_packets: int,
     no_pipeline: bool,
+    debug: bool = False,
 ) -> None:
     state = flow_state.pop(flow_key, None)
     if state is None or not state["packets"]:
@@ -141,18 +144,53 @@ def process_and_maybe_flush(
         state["packets"],
     )
 
-    print(
-        f"[FLOW] {flow.flow_id} src={flow.src_ip}:{flow.src_port} "
-        f"dst={flow.dst_ip}:{flow.dst_port} proto={flow.protocol} "
-        f"packets={len(flow.packets_data)}"
-    )
+    if debug:
+        _emit("flow_start", {
+            "flow_id": flow.flow_id,
+            "src": f"{flow.src_ip}:{flow.src_port}",
+            "dst": f"{flow.dst_ip}:{flow.dst_port}",
+            "proto": flow.protocol,
+            "packets": len(flow.packets_data),
+        })
 
     if no_pipeline:
-        print("[FLOW] FlowData built, pipeline execution skipped.")
+        _emit("flow_skip", {"flow_id": flow.flow_id, "reason": "no_pipeline"})
         return
 
-    result = pipeline.process_captured_flow(flow)
-    print(f"[RESULT] is_abnormal={result.is_abnormal} inference={result.inference_result}")
+    try:
+        result = pipeline.process_captured_flow(flow)
+        ir = result.inference_result or {}
+        _emit("flow_result", {
+            "flow_id": result.flow_id,
+            "src": f"{result.src_ip}:{result.src_port}",
+            "dst": f"{result.dst_ip}:{result.dst_port}",
+            "proto": result.protocol,
+            "is_abnormal": result.is_abnormal,
+            "class_name": ir.get("class_name"),
+            "attack_type": ir.get("attack_type"),
+            "alert_level": ir.get("alert_level"),
+            "confidence": ir.get("confidence"),
+            "distance": ir.get("distance"),
+            "commit_ratio": ir.get("commit_ratio"),
+        })
+    except Exception as exc:
+        _emit("flow_error", {
+            "flow_id": flow.flow_id,
+            "error": str(exc),
+            "src": f"{flow.src_ip}:{flow.src_port}",
+            "dst": f"{flow.dst_ip}:{flow.dst_port}",
+        }, level="ERROR")
+
+
+def _emit(event_type: str, data: dict, level: str = "INFO") -> None:
+    """Emit a JSON line to stdout for downstream consumers (ELK, Fluentd, etc.)."""
+    record = {
+        "ts": time.time(),
+        "event": event_type,
+        "level": level,
+        **data,
+    }
+    print(json.dumps(record, default=str), flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -272,7 +310,7 @@ def capture_flows(args: argparse.Namespace) -> None:
             key for key, state in flow_state.items() if now - state["last_seen"] >= args.flow_idle_timeout
         ]
         for key in expired_keys:
-            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline)
+            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
 
     captured_packets = {"count": 0}
 
@@ -315,7 +353,7 @@ def capture_flows(args: argparse.Namespace) -> None:
             )
 
         if len(state["packets"]) >= args.max_packets_per_flow:
-            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline)
+            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
         else:
             flush_idle_flows()
 
@@ -327,7 +365,14 @@ def capture_flows(args: argparse.Namespace) -> None:
         print(f"[DIAG] requested iface={args.iface} resolved_iface={resolved_iface}")
     args.iface = resolved_iface
 
-    print(f"Starting capture on iface={args.iface} filter='{args.filter}'")
+    _emit("capture_start", {
+        "iface": args.iface,
+        "filter": args.filter,
+        "max_packets_per_flow": args.max_packets_per_flow,
+        "flow_idle_timeout": args.flow_idle_timeout,
+        "duration": args.duration,
+        "count": args.count,
+    })
 
     # Continuous capture using AsyncSniffer and a stop event so Ctrl+C stops immediately
     end_time = time.time() + args.duration if args.duration else None
@@ -362,9 +407,9 @@ def capture_flows(args: argparse.Namespace) -> None:
     except Exception as exc:
         print("[WARN] failed to stop sniffer cleanly:", exc)
 
-    print("Capture finished, flushing remaining flows...")
+    _emit("capture_stop", {"reason": "finished", "remaining_flows": len(flow_state)})
     for key in list(flow_state.keys()):
-        process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline)
+        process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
 
 
 def main() -> None:

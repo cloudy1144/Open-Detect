@@ -148,7 +148,27 @@ def load_model(model_path, device=None):
 # ============================================================
 # 核心推理
 # ============================================================
-def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
+
+def _distance_to_confidence(euclidean_dist: float, threshold: float) -> float:
+    """将欧氏距离映射为直观的置信度分数 (0~1)。
+
+    公式: confidence = max(0, 1 - (distance / threshold)²)
+
+           距离=0.0 → 100%  (与已知原型完全重合)
+           距离=1.1 →  75%  (很近,高置信度)
+           距离=1.6 →  50%  (明确匹配)
+           距离=1.8 →  36%  (典型正常流量)
+           距离=2.0 →  20%  (边缘)
+           距离≥阈值  →   0%  (用 is_unknown 标识)
+    """
+    if threshold <= 0:
+        return 0.0
+    ratio = euclidean_dist / threshold
+    return max(0.0, round(1.0 - ratio * ratio, 4))
+
+
+def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
+            class_thresholds=None, recon_threshold=0.15, bg_ratio=0.7):
     """
     对输入样本进行推理.
 
@@ -156,12 +176,18 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
         model: OpenDetectNet
         input_data: np.ndarray(32,32) / PIL.Image / str路径
         top_k: 返回前 K 个最可能的类别
-        threshold: 未知攻击距离阈值（min_dist > threshold → Unknown）
-        temperature: softmax 温度参数
+        threshold: 未知攻击距离阈值（欧氏距离, 默认2.24）
+        temperature: 已废弃（保留签名兼容, 不再参与计算）
+        class_thresholds: dict[int, float], 类特定阈值
+        recon_threshold: float, 重构MSE阈值
+        bg_ratio: float, 背景原型比率
 
     Returns:
         list[dict]: [
-            {"class": str, "label": int, "confidence": float, "origin": str, "is_unknown": bool},
+            {"class": str, "label": int, "confidence": float, "origin": str,
+             "is_unknown": bool, "distance": float,
+             "recon_error": float, "bg_distance": float,
+             "commit_ratio": float, "recon_suspicious": bool},
             ...
         ]
     """
@@ -175,45 +201,78 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
     dist = dist.squeeze(0)          # (44,)
     min_dist = dist.min().item()
     min_label = dist.argmin().item()
-    min_euclidean = float(np.sqrt(min_dist))  # 欧氏距离
+    # 欧氏距离（用于展示、阈值比较）
+    euclidean_dist = torch.sqrt(dist)
+    min_euclidean = euclidean_dist.min().item()
 
-    # 未知攻击检测
-    if min_dist > threshold:
-        # 置信度 = 基于超出阈值的程度，映射到 [0.5, 0.99]
-        # 距离越远置信度越高，但不写死 1.0
-        excess = (min_dist - threshold) / threshold  # 超出比例
-        unknown_conf = min(0.99, 0.5 + excess * 0.1)
+    # 计算重构误差
+    recon_error = float(F.mse_loss(recon_x, tensor).item())
+
+    # 未知攻击检测: 使用欧氏距离（sqrt后的距离）与阈值比较
+    # threshold 在 config.yaml 中定义为欧氏距离阈值（默认 2.24）
+    if min_euclidean > threshold:
         return [{
             "class": UNKNOWN_NAME,
             "label": UNKNOWN_LABEL,
-            "confidence": round(unknown_conf, 6),
+            "confidence": round(_distance_to_confidence(min_euclidean, threshold), 4),
             "origin": "unknown",
             "is_unknown": True,
             "distance": round(min_euclidean, 4),
+            "recon_error": round(recon_error, 6),
+            "bg_distance": 0.0,
+            "commit_ratio": 1.0,
+            "recon_suspicious": recon_error > recon_threshold if recon_threshold > 0 else False,
         }]
 
-    # 计算置信度: softmax(-sqrt(dist) / temperature)
-    # 开根号将平方欧氏距离转为欧氏距离，温度默认 1.0 即可
-    euclidean_dist = torch.sqrt(dist)
-    confidence = F.softmax(-euclidean_dist / temperature, dim=0)  # (44,)
-
-    # Top-K
-    topk_conf, topk_indices = torch.topk(confidence, min(top_k, len(confidence)))
-    topk_dists = euclidean_dist[topk_indices]  # 各自的距离
-
+    # 按欧氏距离升序排序，取 top_k
+    sorted_idxs = torch.argsort(euclidean_dist)
     results = []
-    for conf, idx, d in zip(topk_conf.tolist(), topk_indices.tolist(), topk_dists.tolist()):
+    for rank in range(min(top_k, len(sorted_idxs))):
+        idx = sorted_idxs[rank].item()
+        d = euclidean_dist[idx].item()
         class_name = CLASS_NAMES.get(idx, f"Class_{idx}")
+        # 使用用该类特定的阈值（如果有），否则用全局阈值
+        class_thr = class_thresholds.get(idx, threshold) if class_thresholds else threshold
+        conf = _distance_to_confidence(d, class_thr)
         results.append({
             "class": class_name,
             "label": idx,
-            "confidence": round(conf, 6),
+            "confidence": conf,
             "origin": CLASS_ORIGIN.get(class_name, "unknown"),
             "is_unknown": False,
             "distance": round(d, 4),
+            "recon_error": round(recon_error, 6),
+            "bg_distance": 0.0,
+            "commit_ratio": 0.0,
+            "recon_suspicious": recon_error > recon_threshold if recon_threshold > 0 else False,
         })
 
     return results
+
+
+def predict_batch(model, images, top_k=5, threshold=5.0, temperature=4.0,
+                  class_thresholds=None, recon_threshold=0.15, bg_ratio=0.7):
+    """批处理推理接口。
+
+    Args:
+        model: OpenDetectNet
+        images: list[np.ndarray], 灰度图像列表
+        top_k: int
+        threshold: float
+        temperature: float
+        class_thresholds: dict | None
+        recon_threshold: float
+        bg_ratio: float
+
+    Returns:
+        list[list[dict]]: 每个输入图像对应的 predict() 结果
+    """
+    return [
+        predict(model, img, top_k=top_k, threshold=threshold, temperature=temperature,
+                class_thresholds=class_thresholds, recon_threshold=recon_threshold,
+                bg_ratio=bg_ratio)
+        for img in images
+    ]
 
 
 # ============================================================
@@ -229,8 +288,8 @@ def main():
                         help="返回 Top-K 预测结果")
     parser.add_argument("--threshold", type=float, default=5.0,
                         help="未知攻击距离阈值 (默认5.0)")
-    parser.add_argument("--temperature", type=float, default=1.0,
-                        help="softmax 温度参数 (默认1.0)")
+    parser.add_argument("--temperature", type=float, default=4.0,
+                        help="softmax 温度参数 (默认4.0)")
     parser.add_argument("--device", type=str, default=None,
                         help="设备: cpu | cuda")
     args = parser.parse_args()

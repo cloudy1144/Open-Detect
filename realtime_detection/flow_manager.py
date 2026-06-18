@@ -33,9 +33,11 @@ class FlowData:
 class FlowManager:
     """Thread-safe flow store with duplicate suppression and expiry cleanup."""
 
-    def __init__(self, expire_minutes: int = 5, cleanup_interval_seconds: int = 30, auto_start_cleaner: bool = True):
+    def __init__(self, expire_minutes: int = 5, cooldown_seconds: int = 60,
+                 cleanup_interval_seconds: int = 30, auto_start_cleaner: bool = True):
         self.flow_storage: dict[str, FlowData] = {}
         self.expire_delta = expire_minutes * 60
+        self.cooldown_seconds = cooldown_seconds
         self.cleanup_interval_seconds = cleanup_interval_seconds
         self.lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -94,11 +96,13 @@ class FlowManager:
             return list(self.flow_storage.values())
 
     def is_flow_processed(self, flow_id: str) -> bool:
-        """Check whether a flow already has inference results."""
+        """Check whether a flow already has inference results within cooldown window."""
 
         with self.lock:
             flow = self.flow_storage.get(flow_id)
-            return flow is not None and flow.inference_result is not None
+            if flow is None or flow.processed_at is None:
+                return False
+            return (time.time() - flow.processed_at) < self.cooldown_seconds
 
     def cleanup_expired(self) -> int:
         """Remove stale flows and return the number removed."""
