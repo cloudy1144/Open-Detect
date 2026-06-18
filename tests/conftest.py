@@ -147,3 +147,14 @@ def feed_pipeline(pipeline: DetectionPipeline, flow: FlowData) -> FlowData:
     """Feed a flow through the pipeline and return the processed result."""
     flow.gray_img = build_gray_image(flow.packets_data)
     return pipeline.process_captured_flow(flow)
+
+
+# ── Dashboard Flask Client Fixture ──────────────────────────────────
+
+@pytest.fixture(scope="module")
+def client():
+    """Create a Flask test client for the dashboard app."""
+    from tests.dashboard.app import app
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        yield c

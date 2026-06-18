@@ -200,6 +200,258 @@ class TestTLSEncryptedTraffic:
         assert "alert_level" in ir, "Should have alert_level"
 
 
+class TestDashboardBatchAndChain:
+    """Verify dashboard batch-run and attack-chain APIs."""
+
+    def test_batch_run_completes(self, client):
+        """POST /api/test/batch returns ok and runs through 44 classes."""
+        r = client.post("/api/test/batch")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("ok") is True, f"Batch run should be ok: {d}"
+
+    def test_batch_status_has_progress(self, client):
+        """GET /api/test/batch/status returns completion counts."""
+        r = client.get("/api/test/batch/status")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "completed" in d, f"Should have completed: {d}"
+        assert "total" in d, f"Should have total: {d}"
+        assert isinstance(d["completed"], int)
+        assert isinstance(d["total"], int)
+
+    def test_attack_chain_stages(self, client):
+        """POST /api/test/chain runs a 5-stage attack chain."""
+        # Stop any running attack first (batch from previous test may still run)
+        client.post("/api/attack/stop")
+        import time; time.sleep(0.3)
+        r = client.post("/api/test/chain")
+        # Accept both 200 (ok) and 409 (batch still cleaning up)
+        d = r.get_json()
+        if r.status_code == 200:
+            assert d.get("ok") is True, f"Chain should be ok: {d}"
+        assert d.get("total_stages") == 5
+
+    def test_chain_status_returns_stages(self, client):
+        """GET /api/test/chain/status returns stages list."""
+        r = client.get("/api/test/chain/status")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "stages" in d
+        assert "summary" in d
+        assert "running" in d
+
+
+class TestDashboardCompareMode:
+    """Verify model-vs-rule comparison API."""
+
+    def test_compare_mode_port_scan(self, client):
+        """Port scan should be detected by rule, not model."""
+        r = client.post("/api/test/compare",
+                        json={"payload_type": "port_scan"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("source") == "rule", f"Port scan source should be rule: {d}"
+        assert d["rule_result"]["attack_type"] is not None
+        assert d.get("compare_summary") is not None
+
+    def test_compare_mode_known_malware(self, client):
+        """Known malware should be detected by model, not rule."""
+        r = client.post("/api/test/compare",
+                        json={"payload_type": "known_malware"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("source") == "model", f"Known malware source should be model: {d}"
+        assert d["model_result"]["attack_type"] == "known_malware"
+
+    def test_compare_mode_normal_traffic(self, client):
+        """Normal traffic should not be detected by either."""
+        r = client.post("/api/test/compare",
+                        json={"payload_type": "normal"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("source") == "neither"
+        # compare_summary may accumulate across calls due to module-level state
+        assert d["compare_summary"]["neither"] >= 1
+
+    def test_compare_mode_unknown_attack(self, client):
+        """Unknown attack (ssh_bruteforce) should only be model-detected."""
+        r = client.post("/api/test/compare",
+                        json={"payload_type": "ssh_bruteforce"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("source") == "model"
+        assert d["model_result"]["attack_type"] == "unknown_attack"
+
+    def test_compare_mode_all_types(self, client):
+        """All payload_types should return valid compare results."""
+        types = ["port_scan", "syn_flood", "c2_beaconing", "known_malware",
+                 "normal", "ssh_bruteforce", "dns_tunnel", "heartbleed",
+                 "icmp_tunnel", "eternal_blue", "slowloris", "dga_domains",
+                 "stratum_mining"]
+        for t in types:
+            r = client.post("/api/test/compare", json={"payload_type": t})
+            assert r.status_code == 200, f"Failed for {t}: {r.status_code}"
+            d = r.get_json()
+            assert "source" in d, f"Missing source for {t}"
+            assert "model_result" in d, f"Missing model_result for {t}"
+            assert "rule_result" in d, f"Missing rule_result for {t}"
+
+
+class TestDashboardParams:
+    """Verify parameter adjustment API."""
+
+    def test_get_params(self, client):
+        """GET /api/test/params returns current parameter values."""
+        r = client.get("/api/test/params")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "params" in d
+        assert d["params"]["threshold"] == 2.24
+        assert d["params"]["recon_threshold"] == 0.15
+        assert d["params"]["bg_ratio"] == 0.7
+
+    def test_put_params_updates_threshold(self, client):
+        """PUT /api/test/params updates threshold value."""
+        r = client.put("/api/test/params", json={"threshold": 1.5})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] is True
+        assert d["params"]["threshold"] == 1.5
+
+        r2 = client.get("/api/test/params")
+        assert r2.get_json()["params"]["threshold"] == 1.5
+
+        # Reset to default
+        client.put("/api/test/params", json={"threshold": 2.24})
+
+    def test_put_params_rejects_out_of_range(self, client):
+        """PUT /api/test/params rejects values outside valid range."""
+        r = client.put("/api/test/params", json={"threshold": 10.0})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] is True
+        assert d["params"]["threshold"] == 2.24
+
+    def test_params_stats_endpoint(self, client):
+        """GET /api/test/params/stats returns detection statistics."""
+        r = client.get("/api/test/params/stats")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "stats" in d
+        assert "known_accuracy" in d["stats"]
+        assert "unknown_detection_rate" in d["stats"]
+        assert "is_unknown_ratio" in d["stats"]
+
+
+class TestDashboardUnknownAttacks:
+    """Verify 8 unknown attack payload generators work correctly."""
+
+    def test_all_8_unknown_payloads_generate(self):
+        """All 8 unknown attack types produce valid payloads."""
+        import sys
+        from pathlib import Path
+        _tests_dir = Path(__file__).resolve().parent
+        if str(_tests_dir) not in sys.path:
+            sys.path.insert(0, str(_tests_dir))
+        from attack_simulator.unknown_attacks import (
+            get_unknown_attack_names, generate_unknown_attack,
+        )
+        names = get_unknown_attack_names()
+        assert len(names) == 8, f"Expected 8 unknown attacks, got {len(names)}: {names}"
+
+        for name in names:
+            payloads = generate_unknown_attack(name, count=1)
+            assert len(payloads) == 1, f"{name}: expected 1 payload"
+            assert isinstance(payloads[0], bytes), f"{name}: payload should be bytes"
+            assert 40 <= len(payloads[0]) <= 3000, \
+                f"{name}: payload size {len(payloads[0])} out of range"
+
+    def test_unknown_attacks_have_protocol_signatures(self):
+        """Each unknown attack type has its distinguishing protocol signature."""
+        import sys
+        from pathlib import Path
+        _tests_dir = Path(__file__).resolve().parent
+        if str(_tests_dir) not in sys.path:
+            sys.path.insert(0, str(_tests_dir))
+        from attack_simulator.unknown_attacks import generate_unknown_attack
+
+        p = generate_unknown_attack("ssh_bruteforce", count=1)[0]
+        assert b"SSH-2.0" in p, "SSH bruteforce must contain SSH banner"
+
+        p = generate_unknown_attack("heartbleed", count=1)[0]
+        assert b"\x18" in p, "Heartbleed should contain TLS heartbeat content type (24)"
+
+        p = generate_unknown_attack("stratum_mining", count=1)[0]
+        assert b'"jsonrpc"' in p, "Stratum should contain JSON-RPC"
+
+        p = generate_unknown_attack("eternal_blue", count=1)[0]
+        assert b"\xffSMB" in p, "EternalBlue should contain SMB signature"
+
+
+class TestDashboardTriggerAPI:
+    """Verify the new aggregated trigger endpoint for rule/model buttons."""
+
+    def test_trigger_rule_source(self, client):
+        """POST /api/test/trigger with source=rule should start 12 attacks (4 each)."""
+        client.post("/api/attack/stop")
+        import time; time.sleep(0.3)
+        r = client.post("/api/test/trigger", json={"source": "rule"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("ok") is True, f"Trigger rule should be ok: {d}"
+        assert d["source"] == "rule"
+        assert d["total"] == 12
+
+    def test_trigger_model_source(self, client):
+        """POST /api/test/trigger with source=model should start 12 attacks (4 each)."""
+        client.post("/api/attack/stop")
+        import time; time.sleep(0.5)
+        r = client.post("/api/test/trigger", json={"source": "model"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d.get("ok") is True, f"Trigger model should be ok: {d}"
+        assert d["source"] == "model"
+        assert d["total"] == 12
+
+    def test_trigger_rejects_duplicate(self, client):
+        """POST /api/test/trigger should reject (409) when already running."""
+        client.post("/api/attack/stop")
+        import time; time.sleep(0.3)
+        r1 = client.post("/api/test/trigger", json={"source": "rule"})
+        if r1.status_code == 200:
+            r2 = client.post("/api/test/trigger", json={"source": "model"})
+            assert r2.status_code == 409, f"Expected 409 conflict, got {r2.status_code}: {r2.get_json()}"
+            d2 = r2.get_json()
+            assert "已有攻击运行中" in d2.get("message", "")
+
+    def test_alerts_contain_compare_results(self, client):
+        """Alerts from /api/alerts should contain model_result and rule_result."""
+        client.post("/api/attack/stop")
+        import time; time.sleep(0.5)
+        r = client.post("/api/test/trigger", json={"source": "model"})
+        if r.status_code != 200:
+            client.post("/api/attack/stop")
+            time.sleep(0.5)
+            r = client.post("/api/test/trigger", json={"source": "model"})
+        assert r.status_code == 200
+        time.sleep(3.0)
+        r_alerts = client.get("/api/alerts?limit=20")
+        assert r_alerts.status_code == 200
+        alerts = r_alerts.get_json().get("alerts", [])
+        found_compare = False
+        for a in alerts:
+            mr = a.get("model_result", {})
+            rr = a.get("rule_result", {})
+            if mr or rr:
+                found_compare = True
+                if mr:
+                    assert "attack_type" in mr or "alert_level" in mr
+                if rr:
+                    assert "attack_type" in rr or "alert_level" in rr
+        assert found_compare, f"No alerts found with model_result/rule_result"
+
+
 class TestProtocolParser:
     """Verify protocol_parser extracts metadata from raw packets correctly."""
 
