@@ -141,7 +141,9 @@ class DetectionPipeline:
         flow.is_abnormal = bool(inference_result.get("is_abnormal", False))
 
         if flow.is_abnormal:
-            self.metrics.inc_flows_abnormal()
+            # Demo baseline traffic is counted as "flowing" but not abnormal
+            if flow.metadata.get("source") != "demo":
+                self.metrics.inc_flows_abnormal()
 
         export_path = None
         if flow.is_abnormal and self.enable_export:
@@ -162,8 +164,8 @@ class DetectionPipeline:
             if export_path is not None:
                 flow.metadata["export_path"] = export_path
 
-        # Feed to multi-flow correlation engine
-        if self.correlation_engine:
+        # Feed to multi-flow correlation engine (skip demo baseline traffic)
+        if self.correlation_engine and flow.metadata.get("source") != "demo":
             corr_alerts = self.correlation_engine.feed_flow(flow)
             flow.metadata["correlation_alerts"] = len(corr_alerts)
             if corr_alerts:

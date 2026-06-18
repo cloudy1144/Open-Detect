@@ -143,6 +143,12 @@ class AlertManager:
         if not inference_result.get("is_abnormal", False):
             return None
 
+        # Skip alerting for baseline demo traffic — the model flags unknown
+        # synthetic patterns that don't match its training data as abnormal,
+        # but these are normal background flows in demo mode.
+        if flow.metadata.get("source") == "demo":
+            return None
+
         attack_type = inference_result.get("attack_type", "unknown_attack")
         alert_level = inference_result.get("alert_level", "WARNING")
         alert = Alert(
@@ -188,23 +194,46 @@ class AlertManager:
 
     def trigger_correlation_alert(self, alert: Any) -> None:
         """Accept a correlation alert (beaconing/scanning/bidir) for unified query."""
-        # CorrelationAlert is a different type — store as a dict in extra
+        # Extract useful fields from the CorrelationAlert evidence
+        evidence = getattr(alert, "evidence", {})
+        alert_type = getattr(alert, "alert_type", "correlation")
+        alert_level = getattr(alert, "alert_level", "WARNING")
+
+        # Derive dst_ip from evidence if available
+        dst_ip = evidence.get("dst_ip", "-")
+        # For scanning alerts, use unique_dst_ips count as a hint
+        if not dst_ip or dst_ip == "-":
+            unique_dsts = evidence.get("unique_dst_ips", 0)
+            if unique_dsts:
+                dst_ip = f"{unique_dsts} IPs"
+            elif alert_type == "bidirectional_asymmetry":
+                ab_dir = evidence.get("abnormal_direction", {})
+                dst_ip = ab_dir.get("dst", "-")
+
+        # Confidence based on severity level
+        level_conf = {"CRITICAL": 0.92, "WARNING": 0.70, "INFO": 0.48}
+        confidence = level_conf.get(alert_level, 0.70)
+
+        # Class name from alert type
+        class_label = {"beaconing": "C2 Beacon", "scanning": "Scan Activity",
+                       "bidirectional_asymmetry": "Bidir Asymmetry"}.get(alert_type, alert_type)
+
         alert_dict = {
             "alert_id": f"corr-{getattr(alert, 'alert_id', '?')}-{int(time.time()*1000)}",
             "flow_id": "correlation",
             "src_ip": getattr(alert, "src_ip", ""),
-            "dst_ip": "-",
+            "dst_ip": dst_ip,
             "src_port": 0,
             "dst_port": 0,
-            "alert_level": getattr(alert, "alert_level", "WARNING"),
-            "attack_type": getattr(alert, "alert_type", "correlation"),
+            "alert_level": alert_level,
+            "attack_type": alert_type,
             "timestamp": getattr(alert, "timestamp", time.time()),
-            "class_name": "",
-            "confidence": 0.0,
+            "class_name": class_label,
+            "confidence": confidence,
             "kl_distance": 0.0,
             "extra": {
                 "description": getattr(alert, "description", ""),
-                "evidence": getattr(alert, "evidence", {}),
+                "evidence": evidence,
                 "source": "correlation_engine",
             },
         }

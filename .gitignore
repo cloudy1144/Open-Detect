@@ -47,3 +47,5 @@ save_model/
 
 # Explicitly ignore VSCode settings file
 .vscode/settings.json
+.gstack/
+data/cifar-10-python.tar.gz

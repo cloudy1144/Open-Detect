@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open-Detect 测试仪表盘</title>
+<style>
+  :root {
+    --bg: #0f1923;
+    --panel: #1a2733;
+    --border: #243647;
+    --text: #c8d6e5;
+    --text-dim: #6b7f99;
+    --accent: #45aaf2;
+    --critical: #e74c3c;
+    --warning: #f39c12;
+    --info: #3498db;
+    --success: #2ecc71;
+    --pending: #4e5b6c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 16px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 16px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
+  .header .update-time { color: var(--text-dim); font-size: 12px; }
+  .header .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; background: var(--pending);
+  }
+  .status-dot.healthy { background: var(--success); }
+  .status-dot.unhealthy { background: var(--critical); }
+
+  /* Metric cards */
+  .cards { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .card {
+    flex: 1; min-width: 140px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px;
+  }
+  .card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .card .value.critical { color: var(--critical); }
+  .card .value.warning { color: var(--warning); }
+  .card .value.info { color: var(--info); }
+
+  /* Panels row */
+  .panels { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .panel-box {
+    flex: 1; min-width: 300px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 14px;
+  }
+  .panel-box h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; text-transform: uppercase; }
+
+  /* Attack progress */
+  .attack-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .attack-name { width: 130px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .attack-bar {
+    flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;
+  }
+  .attack-bar .fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+  .fill.done { background: var(--success); width: 100%; }
+  .fill.running { background: var(--warning); width: 50%; animation: pulse 1.5s infinite; }
+  .fill.pending { background: var(--pending); width: 5%; }
+  .attack-status { width: 50px; font-size: 11px; text-align: right; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Alert distribution */
+  .dist-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px; }
+  .dist-row .count { font-weight: 700; }
+
+  /* Alert table */
+  .alert-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .alert-table th {
+    text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border);
+    color: var(--text-dim); font-weight: 500; position: sticky; top: 0;
+    background: var(--panel);
+  }
+  .alert-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .alert-table tr:hover { background: rgba(69,170,242,0.05); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+  }
+  .badge-critical { background: rgba(231,76,60,0.2); color: var(--critical); }
+  .badge-warning { background: rgba(243,156,18,0.2); color: var(--warning); }
+  .badge-info { background: rgba(52,152,219,0.2); color: var(--info); }
+
+  /* Table container */
+  .table-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+
+  /* ── Attack Control Panel ── */
+  .ctrl-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .btn {
+    padding: 8px 14px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); cursor: pointer;
+    font-size: 12px; font-family: inherit; transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.danger { border-color: var(--critical); color: var(--critical); }
+  .btn.danger:hover:not(:disabled) { background: rgba(231,76,60,0.1); }
+  .btn.full { border-color: var(--success); color: var(--success); }
+  .btn.full:hover:not(:disabled) { background: rgba(46,204,113,0.1); }
+  .btn-group-label { font-size: 11px; color: var(--text-dim); margin: 8px 0 6px; display: block; }
+  .attack-status-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-radius: 5px; background: var(--bg); margin-bottom: 12px;
+    border: 1px solid var(--border);
+  }
+  .attack-status-bar .dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+  .attack-status-bar .dot.idle { background: var(--text-dim); }
+  .attack-status-bar .dot.active { background: var(--warning); animation: pulse 0.8s infinite; }
+  .attack-status-bar .msg { flex: 1; font-size: 12px; }
+  .attack-console {
+    background: #0a1219; border: 1px solid var(--border); border-radius: 5px;
+    padding: 10px; max-height: 140px; overflow-y: auto; font-size: 11px;
+    color: var(--text-dim); line-height: 1.6;
+  }
+  .attack-console .log-ok { color: var(--success); }
+  .attack-console .log-err { color: var(--critical); }
+  .attack-console .log-time { color: var(--text-dim); opacity: 0.6; margin-right: 8px; }
+
+  .empty-state { text-align: center; padding: 40px; color: var(--text-dim); }
+  .empty-state .icon { font-size: 36px; margin-bottom: 8px; }
+
+  .footer { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    <span class="status-dot" id="dot"></span>
+    Open-Detect 测试仪表盘
+  </h1>
+  <div class="update-time" id="lastUpdate">启动中...</div>
+</div>
+
+<!-- Metric cards -->
+<div class="cards">
+  <div class="card">
+    <div class="label">流量总数</div>
+    <div class="value info" id="card-flows">--</div>
+  </div>
+  <div class="card">
+    <div class="label">异常流量</div>
+    <div class="value warning" id="card-abnormal">--</div>
+  </div>
+  <div class="card">
+    <div class="label">推理次数</div>
+    <div class="value info" id="card-inference">--</div>
+  </div>
+  <div class="card">
+    <div class="label">平均延迟</div>
+    <div class="value" id="card-latency">--</div>
+  </div>
+  <div class="card">
+    <div class="label">运行时间</div>
+    <div class="value" id="card-uptime">--</div>
+  </div>
+</div>
+
+<!-- Panels: Attack progress + Alert distribution -->
+<div class="panels">
+  <div class="panel-box">
+    <h3>攻击进度</h3>
+    <div id="attack-progress">
+      <div class="empty-state"><div class="icon">⏳</div>等待攻击开始...</div>
+    </div>
+  </div>
+  <div class="panel-box">
+    <h3>告警分布</h3>
+    <div id="alert-dist">
+      <div class="empty-state"><div class="icon">📋</div>暂无告警</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Attack Control Panel ── -->
+<div class="panel-box" style="margin-bottom:16px;">
+  <h3 style="display:flex;align-items:center;gap:8px;">
+    手动攻击控制
+    <span style="font-weight:400;font-size:11px;" id="btn-status">就绪</span>
+  </h3>
+
+  <!-- Status bar -->
+  <div class="attack-status-bar" id="status-bar">
+    <span class="dot idle" id="status-dot"></span>
+    <span class="msg" id="status-msg">空闲 — 点击下方按钮发起攻击</span>
+    <span style="font-size:11px;color:var(--text-dim);" id="status-elapsed"></span>
+  </div>
+
+  <!-- Button groups -->
+  <span class="btn-group-label">单次攻击 (快速触发)</span>
+  <div class="ctrl-buttons">
+    <button class="btn" onclick="triggerAttack('scan')" id="btn-scan">
+      🔍 端口扫描
+    </button>
+    <button class="btn" onclick="triggerAttack('ddos')" id="btn-ddos">
+      🌊 SYN Flood
+    </button>
+    <button class="btn" onclick="triggerAttack('beacon')" id="btn-beacon">
+      📡 C2 信标
+    </button>
+    <button class="btn" onclick="triggerAttack('replay_known')" id="btn-replay-known">
+      ☣ 已知恶意
+    </button>
+    <button class="btn" onclick="triggerAttack('replay_unknown')" id="btn-replay-unknown">
+      ❓ 未知攻击
+    </button>
+    <button class="btn" onclick="triggerAttack('replay_normal')" id="btn-replay-normal">
+      ✅ 正常流量
+    </button>
+    <button class="btn" onclick="triggerAttack('replay_tls13')" id="btn-replay-tls13">
+      🔒 TLS 1.3
+    </button>
+  </div>
+
+  <span class="btn-group-label">编排 & 控制</span>
+  <div class="ctrl-buttons">
+    <button class="btn full" onclick="triggerAttack('orchestrate')" id="btn-full">
+      ▶ 全流程编排
+    </button>
+    <button class="btn danger" onclick="stopAttack()" id="btn-stop" disabled>
+      ⏹ 停止攻击
+    </button>
+  </div>
+
+  <span class="btn-group-label">实时数据生成</span>
+  <div class="ctrl-buttons" style="margin-bottom:4px;">
+    <button class="btn" onclick="toggleDemo()" id="btn-demo-toggle">
+      ⏸ 暂停数据生成
+    </button>
+    <span style="font-size:11px;color:var(--text-dim);align-self:center;" id="demo-indicator">● 运行中</span>
+  </div>
+
+  <!-- Console log -->
+  <div class="attack-console" id="console">
+    <div style="color:var(--text-dim);">等待操作...</div>
+  </div>
+</div>
+
+<!-- Alert table -->
+<div class="panel-box" style="padding:0;">
+  <div style="padding:14px;border-bottom:1px solid var(--border);">
+    <h3 style="margin:0;">最新告警 <span style="font-weight:400;color:var(--text-dim);" id="alert-count">(0)</span></h3>
+  </div>
+  <div class="table-wrap">
+    <table class="alert-table">
+      <thead>
+        <tr>
+          <th>时间</th><th>攻击类型</th><th>分类</th><th>等级</th><th>置信度</th><th>源 → 目标</th>
+        </tr>
+      </thead>
+      <tbody id="alert-tbody">
+        <tr><td colspan="6" class="empty-state" id="alert-empty">暂无告警数据</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">Open-Detect Test Dashboard · 每 3 秒自动刷新</div>
+
+<script>
+const REFRESH_MS = 3000;
+const ATTACK_STATUS_MS = 1000;
+const ATK_MAP = {
+  scan:           { name: '端口扫描',     endpoint: '/api/attack/scan',            attack_type: 'port_scan' },
+  ddos:           { name: 'SYN Flood',   endpoint: '/api/attack/ddos',            attack_type: 'syn_flood' },
+  beacon:         { name: 'C2 信标',     endpoint: '/api/attack/beacon',          attack_type: 'c2_beaconing' },
+  replay_known:   { name: '已知恶意回放', endpoint: '/api/attack/replay',          attack_type: 'pcap_replay_known_malware', body: { pcap_type: 'known_malware' } },
+  replay_unknown: { name: '未知攻击回放', endpoint: '/api/attack/replay',          attack_type: 'pcap_replay_unknown_attack', body: { pcap_type: 'unknown_attack' } },
+  replay_normal:  { name: '正常流量回放', endpoint: '/api/attack/replay',          attack_type: 'pcap_replay_normal', body: { pcap_type: 'normal' } },
+  replay_tls13:   { name: 'TLS 1.3 加密', endpoint: '/api/attack/replay',          attack_type: 'pcap_replay_tls13', body: { pcap_type: 'tls13' } },
+  orchestrate:    { name: '全流程编排',   endpoint: '/api/attack/orchestrate',     attack_type: 'full_suite' },
+};
+let _attackRunning = false;
+let _consoleLines = [];
+
+function consoleLog(msg, cls) {
+  const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  _consoleLines.push({ time: now, msg: msg, cls: cls || '' });
+  if (_consoleLines.length > 50) _consoleLines = _consoleLines.slice(-50);
+  const el = document.getElementById('console');
+  el.innerHTML = _consoleLines.map(l =>
+    '<div><span class="log-time">' + l.time + '</span><span class="' + l.cls + '">' + l.msg + '</span></div>'
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function setButtonsEnabled(enabled) {
+  _attackRunning = !enabled;
+  document.querySelectorAll('.ctrl-buttons button').forEach(b => {
+    if (b.id === 'btn-stop') return;
+    b.disabled = !enabled;
+  });
+  document.getElementById('btn-stop').disabled = enabled;
+  document.getElementById('btn-status').textContent = enabled ? '就绪' : '攻击中...';
+  const dot = document.getElementById('status-dot');
+  dot.className = 'dot ' + (enabled ? 'idle' : 'active');
+  dot.style.animation = enabled ? '' : '';
+}
+
+async function checkAttackStatus() {
+  try {
+    const r = await fetch('/api/attack/status');
+    const d = await r.json();
+    const sb = document.getElementById('status-bar');
+    const msg = document.getElementById('status-msg');
+    const elapsed = document.getElementById('status-elapsed');
+    const dot = document.getElementById('status-dot');
+
+    if (d.running && !_attackRunning) {
+      setButtonsEnabled(false);
+    } else if (!d.running && _attackRunning) {
+      setButtonsEnabled(true);
+    }
+
+    if (d.running) {
+      dot.className = 'dot active';
+      msg.textContent = '运行中: ' + d.name;
+      elapsed.textContent = d.elapsed_s ? d.elapsed_s.toFixed(0) + 's' : '';
+    } else if (!_attackRunning) {
+      dot.className = 'dot idle';
+      msg.textContent = '空闲 — 点击下方按钮发起攻击';
+      elapsed.textContent = '';
+    }
+
+    // Render attack progress from server-tracked progresses (always update, even when empty)
+    renderAttackProgress(d.progresses || {});
+  } catch(e) {}
+}
+
+async function triggerAttack(key) {
+  const atk = ATK_MAP[key];
+  if (!atk) return;
+
+  consoleLog('发起: ' + atk.name + ' ...', '');
+  setButtonsEnabled(false);
+  document.getElementById('status-msg').textContent = '启动中: ' + atk.name;
+
+  const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+  if (atk.body) opts.body = JSON.stringify(atk.body);
+
+  try {
+    const r = await fetch(atk.endpoint, opts);
+    const d = await r.json();
+    if (d.ok) {
+      consoleLog(atk.name + ' — ' + d.message, 'log-ok');
+    } else {
+      consoleLog(atk.name + ' — ' + d.message, 'log-err');
+      setButtonsEnabled(true);
+    }
+  } catch(e) {
+    consoleLog(atk.name + ' — 请求失败: ' + e.message, 'log-err');
+    setButtonsEnabled(true);
+  }
+}
+
+async function stopAttack() {
+  consoleLog('用户请求停止攻击...', '');
+  try {
+    const r = await fetch('/api/attack/stop', { method: 'POST' });
+    const d = await r.json();
+    consoleLog(d.message, 'log-ok');
+  } catch(e) {
+    consoleLog('停止请求失败', 'log-err');
+  }
+  setButtonsEnabled(true);
+}
+
+var _demoActive = true;
+async function toggleDemo() {
+  const endpoint = _demoActive ? '/api/demo/pause' : '/api/demo/resume';
+  const btn = document.getElementById('btn-demo-toggle');
+  const ind = document.getElementById('demo-indicator');
+  btn.disabled = true;
+  try {
+    const r = await fetch(endpoint, { method: 'POST' });
+    const d = await r.json();
+    _demoActive = d.active;
+    btn.textContent = _demoActive ? '⏸ 暂停数据生成' : '▶ 恢复数据生成';
+    ind.textContent = _demoActive ? '● 运行中' : '○ 已暂停';
+    ind.style.color = _demoActive ? 'var(--success)' : 'var(--accent)';
+  } catch(e) {
+    console.error('Demo toggle failed:', e);
+  }
+  btn.disabled = false;
+}
+
+async function syncDemoStatus() {
+  try {
+    const r = await fetch('/api/demo/status');
+    const d = await r.json();
+    _demoActive = d.active;
+    const btn = document.getElementById('btn-demo-toggle');
+    const ind = document.getElementById('demo-indicator');
+    btn.textContent = _demoActive ? '⏸ 暂停数据生成' : '▶ 恢复数据生成';
+    ind.textContent = _demoActive ? '● 运行中' : '○ 已暂停';
+    ind.style.color = _demoActive ? 'var(--success)' : 'var(--accent)';
+  } catch(e) {}
+}
+
+function fmtTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+function fmtUptime(s) {
+  if (!s) return '--';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function fmtLatency(ms) {
+  if (!ms) return '--';
+  if (ms < 1) return (ms * 1000).toFixed(0) + ' μs';
+  if (ms < 1000) return ms.toFixed(0) + ' ms';
+  return (ms / 1000).toFixed(2) + ' s';
+}
+
+async function loadSummary() {
+  try {
+    const r = await fetch('/api/summary');
+    const d = await r.json();
+
+    document.getElementById('dot').className = 'status-dot ' + (d.healthy ? 'healthy' : 'unhealthy');
+    document.getElementById('card-flows').textContent = d.flows_total ?? '--';
+    document.getElementById('card-abnormal').textContent = d.flows_abnormal ?? '--';
+    document.getElementById('card-inference').textContent = d.inference_count ?? '--';
+    document.getElementById('card-latency').textContent = fmtLatency(d.inference_avg_ms);
+    document.getElementById('card-uptime').textContent = fmtUptime(d.uptime_seconds);
+    document.getElementById('alert-count').textContent = `(${d.alerts_total ?? 0})`;
+    renderAlertDist(d);
+    document.getElementById('lastUpdate').textContent = '最后更新: ' + fmtTime(d.server_time);
+  } catch(e) {
+    document.getElementById('dot').className = 'status-dot unhealthy';
+    document.getElementById('lastUpdate').textContent = '连接失败...';
+  }
+}
+
+async function loadAlerts() {
+  try {
+    const r = await fetch('/api/alerts?limit=50');
+    const d = await r.json();
+    renderAlertTable(d.alerts || []);
+  } catch(e) {}
+}
+
+const KNOWN_SEQUENCE = [
+  'port_scan', 'syn_flood', 'c2_beaconing',
+  'pcap_replay_known_malware', 'pcap_replay_unknown_attack',
+  'pcap_replay_normal', 'pcap_replay_tls13'
+];
+const NICE_NAMES = {
+  'port_scan': '端口扫描',
+  'syn_flood': 'SYN Flood DDoS',
+  'c2_beaconing': 'C2 信标',
+  'pcap_replay_known_malware': '已知恶意回放',
+  'pcap_replay_unknown_attack': '未知攻击回放',
+  'pcap_replay_normal': '正常流量回放',
+  'pcap_replay_tls13': 'TLS 1.3 加密',
+};
+
+function renderAttackProgress(progresses) {
+  const el = document.getElementById('attack-progress');
+  const entries = Object.entries(progresses || {});
+  if (!entries.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">⏳</div>等待攻击开始...</div>';
+    return;
+  }
+  let html = '';
+  for (const [attackType, info] of entries) {
+    const name = NICE_NAMES[attackType] || attackType;
+    const pct = info.progress || 0;
+    let stateClass = 'pending', statusText = '等待';
+    if (info.status === 'done') { stateClass = 'done'; statusText = '✅ ' + pct + '%'; }
+    else if (info.status === 'running') { stateClass = 'running'; statusText = '⏳ ' + pct + '%'; }
+    else { statusText = '⏸ ' + pct + '%'; }
+    html += '<div class="attack-row">' +
+      '<div class="attack-name">' + name + '</div>' +
+      '<div class="attack-bar"><div class="fill ' + stateClass + '" style="width:' + pct + '%"></div></div>' +
+      '<div class="attack-status">' + statusText + '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderAlertDist(summary) {
+  const el = document.getElementById('alert-dist');
+  if (!summary.alerts_total) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📋</div>暂无告警</div>';
+    return;
+  }
+  el.innerHTML =
+    '<div class="dist-row"><span style="color:var(--critical);">CRITICAL</span><span class="count" style="color:var(--critical);">' + (summary.alerts_critical || 0) + '</span></div>' +
+    '<div class="dist-row"><span style="color:var(--warning);">WARNING</span><span class="count" style="color:var(--warning);">' + (summary.alerts_warning || 0) + '</span></div>' +
+    '<div class="dist-row"><span style="color:var(--info);">INFO</span><span class="count" style="color:var(--info);">' + Math.max(0, (summary.alerts_total || 0) - (summary.alerts_critical || 0) - (summary.alerts_warning || 0)) + '</span></div>' +
+    '<div class="dist-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;color:var(--text-dim);"><span>合计</span><span class="count">' + (summary.alerts_total || 0) + '</span></div>';
+}
+
+function renderAlertTable(alerts) {
+  const tbody = document.getElementById('alert-tbody');
+  const empty = document.getElementById('alert-empty');
+  if (!alerts.length) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  let html = '';
+  for (const a of alerts) {
+    html += '<tr>' +
+      '<td>' + fmtTime(a.timestamp) + '</td>' +
+      '<td>' + (a.attack_type || '--') + '</td>' +
+      '<td>' + (a.class_name || '--') + '</td>' +
+      '<td><span class="badge badge-' + (a.alert_level || 'info').toLowerCase() + '">' + (a.alert_level || 'INFO') + '</span></td>' +
+      '<td>' + (a.confidence ? (a.confidence * 100).toFixed(1) + '%' : '--') + '</td>' +
+      '<td style="color:var(--text-dim);">' + (a.src_ip || '--') + ':' + (a.src_port || '') + ' → ' + (a.dst_ip || '--') + ':' + (a.dst_port || '') + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+// Poll
+setInterval(() => { loadSummary(); loadAlerts(); }, REFRESH_MS);
+setInterval(checkAttackStatus, ATTACK_STATUS_MS);
+loadSummary();
+loadAlerts();
+checkAttackStatus();
+syncDemoStatus();
+</script>
+
+</body>
+</html>

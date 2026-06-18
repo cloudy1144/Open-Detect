@@ -1,0 +1,1 @@
+/root/Open-Detect-master/.trae/skills/gstack/careful/SKILL.md
