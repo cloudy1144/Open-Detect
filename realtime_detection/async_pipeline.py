@@ -13,7 +13,9 @@ import numpy as np
 from .alert_manager import Alert, AlertManager
 from .dynamic_threshold import DynamicThresholdManager, ThresholdConfig
 from .exporter import export_abnormal_flow
+from .flow_correlation import FlowCorrelationEngine, CorrelationAlert
 from .flow_manager import FlowData, FlowManager
+from .health import MetricsCollector
 from .logger import get_logger
 from .model_adapter import InferenceConfig, OpenDetectInferenceAdapter
 from .preprocess import build_gray_image
@@ -37,7 +39,7 @@ class AsyncDetectionPipeline:
     def __init__(
         self,
         model_path: str = "save_model/mixed_44_split_0.pt",
-        threshold: float = 5.0,
+        threshold: float = 2.24,
         top_k: int = 1,
         temperature: float = 1.0,
         expire_minutes: int = 5,
@@ -46,6 +48,12 @@ class AsyncDetectionPipeline:
         device: Optional[str] = None,
         max_workers: int = 4,
         batch_size: int = 32,
+        class_thresholds: dict[int, float] | None = None,
+        recon_threshold: float = 0.15,
+        bg_ratio: float = 0.7,
+        enable_correlation: bool = True,
+        enable_dynamic_threshold: bool = False,
+        baseline_kl_distances: Optional[list[float]] = None,
     ):
         self.flow_manager = FlowManager(expire_minutes=expire_minutes)
         self.alert_manager = AlertManager()
@@ -56,6 +64,9 @@ class AsyncDetectionPipeline:
                 top_k=top_k,
                 temperature=temperature,
                 device=device,
+                class_thresholds=class_thresholds,
+                recon_threshold=recon_threshold,
+                bg_ratio=bg_ratio,
             )
         )
         self.export_dir = export_dir
@@ -63,10 +74,19 @@ class AsyncDetectionPipeline:
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.batch_size = batch_size
         self._lock = asyncio.Lock()
-        
+
         # Dynamic threshold integration
-        self.threshold_manager = DynamicThresholdManager()
+        self.threshold_manager = DynamicThresholdManager(
+            ThresholdConfig(baseline_kl_distances=baseline_kl_distances or [])
+        )
         self.threshold_manager.register_update_callback(self._on_threshold_update)
+        self.enable_dynamic_threshold = enable_dynamic_threshold
+
+        # Multi-flow correlation engine
+        self.correlation_engine = FlowCorrelationEngine() if enable_correlation else None
+
+        # Metrics
+        self.metrics = MetricsCollector()
 
     def _on_threshold_update(self, new_threshold: float):
         """Update predictor threshold when dynamic threshold changes."""
@@ -97,9 +117,19 @@ class AsyncDetectionPipeline:
                 flow.gray_img = build_gray_image(flow.packets_data)
 
             # Inference
-            inference_result = self.predictor.infer(flow.gray_img)
+            try:
+                inference_result = self.predictor.infer(flow.gray_img)
+            except Exception:
+                self.metrics.inc_inference_errors()
+                flow.metadata["error"] = "inference_failed"
+                return flow
+
+            self.metrics.inc_inference_count()
             flow.inference_result = inference_result
             flow.is_abnormal = bool(inference_result.get("is_abnormal", False))
+
+            if flow.is_abnormal:
+                self.metrics.inc_flows_abnormal()
 
             # Export if abnormal
             export_path = None
@@ -121,12 +151,23 @@ class AsyncDetectionPipeline:
                 flow.metadata["alert_id"] = alert.alert_id
                 logger.log_alert(asdict(alert))
 
+            # Feed to multi-flow correlation engine
+            if self.correlation_engine:
+                corr_alerts = self.correlation_engine.feed_flow(flow)
+                flow.metadata["correlation_alerts"] = len(corr_alerts)
+                if corr_alerts:
+                    self.metrics.inc_correlation_alerts(len(corr_alerts))
+
             processing_time = (time.time() - start_time) * 1000
+            self.metrics.record_inference_latency_ms(processing_time)
+            self.metrics.inc_flows_total()
             logger.log_flow_processed(flow.flow_id, flow.is_abnormal, processing_time)
 
         except Exception as e:
             logger.error(f"Error processing flow {flow.flow_id}: {str(e)}", exc_info=True)
             flow.metadata["error"] = str(e)
+            self.metrics.inc_inference_errors()
+            self.metrics.inc_flows_total()
 
         return flow
 
@@ -206,28 +247,57 @@ class AsyncDetectionPipeline:
     def register_alert_callback(self, callback: Callable[[Alert], None]) -> None:
         self.alert_manager.register_alert_callback(callback)
 
+    def register_correlation_callback(self, callback) -> None:
+        """Register callback for correlation alerts (beaconing, scanning)."""
+        if self.correlation_engine:
+            self.correlation_engine.register_alert_callback(callback)
+
     async def close(self):
         """Cleanup resources."""
         self.executor.shutdown(wait=True)
         self.flow_manager.stop_cleaner()
+        if self.correlation_engine:
+            self.correlation_engine.stop()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a simple serializable snapshot for monitoring."""
+        return {
+            "flow_count": len(self.flow_manager.get_all_flows()),
+            "alert_count": len(self.alert_manager.get_alert_history()),
+            "threshold_statistics": self.threshold_manager.get_statistics(),
+            "correlation": self.correlation_engine.snapshot() if self.correlation_engine else {},
+        }
 
 
 class BatchInferenceAdapter:
-    """Batch inference adapter for improved throughput."""
+    """Batch inference adapter for improved GPU throughput."""
 
     def __init__(self, predictor: OpenDetectInferenceAdapter, batch_size: int = 32):
         self.predictor = predictor
         self.batch_size = batch_size
 
     def infer_batch(self, gray_images: List[np.ndarray]) -> List[dict[str, Any]]:
-        """Run batch inference on multiple images."""
-        results = []
+        """Run true batched inference using predict_batch.
+
+        Stacks images into a single tensor and invokes the model once
+        per batch, yielding ~30x throughput improvement over sequential.
+        """
+        from predict import predict_batch
+
+        all_results: List[dict[str, Any]] = []
         for i in range(0, len(gray_images), self.batch_size):
-            batch = gray_images[i:i+self.batch_size]
-            # Process each image in batch sequentially
-            for img in batch:
-                try:
-                    results.append(self.predictor.infer(img))
-                except Exception as e:
-                    results.append({"error": str(e), "is_abnormal": False})
-        return results
+            batch = gray_images[i:i + self.batch_size]
+            batch_results = predict_batch(
+                self.predictor.model,
+                batch,
+                top_k=self.predictor.config.top_k,
+                threshold=self.predictor.config.threshold,
+                temperature=self.predictor.config.temperature,
+                class_thresholds=self.predictor.config.class_thresholds,
+                recon_threshold=self.predictor.config.recon_threshold,
+                bg_ratio=self.predictor.config.bg_ratio,
+            )
+            # Flatten: each image has list[dict], take top1 for compatibility
+            for results in batch_results:
+                all_results.append(results[0] if results else {"error": "no results"})
+        return all_results

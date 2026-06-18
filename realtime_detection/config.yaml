@@ -1,0 +1,54 @@
+# Open-Detect Realtime Detection Configuration
+# All parameters in one place — no more hunting through source files.
+# Override with environment variables: OD_<SECTION>_<KEY> (e.g. OD_MODEL_threshold=3.0)
+
+model:
+  path: save_model/mixed_44_split_0.pt
+  device: cuda           # cuda | cpu | auto
+  threshold: 2.24         # euclidean distance threshold for unknown detection
+  top_k: 1                # number of top match results to return
+  temperature: 1.0        # softmax temperature for confidence
+  recon_threshold: 0.15   # reconstruction error threshold (MSE)
+  bg_ratio: 0.7           # commit_ratio threshold (> this → unknown)
+  class_thresholds: {}    # per-class overrides, e.g. {31: 2.5, 15: 1.8}
+
+pipeline:
+  expire_minutes: 5       # auto-cleanup flows older than this
+  cooldown_seconds: 60    # dedup: same 5-tuple not re-processed within this window
+  enable_export: true     # export abnormal flows as PCAP
+  export_dir: ./abnormal_flows
+  enable_correlation: true  # multi-flow behavioral analysis (C2 beacon, scan detection)
+  enable_health: true     # write health.json every 10s
+  db_path: ./alerts.db    # SQLite alert persistence (null = in-memory only)
+
+capture:
+  iface: eth0             # default network interface
+  filter: "ip"            # BPF filter expression
+  max_packets_per_flow: 10
+  flow_idle_timeout: 5.0  # seconds before 5-tuple state resets
+  debug: false
+  output_format: json     # json | text
+
+correlation:
+  beacon_window_seconds: 300
+  beacon_min_connections: 5
+  beacon_max_jitter_ratio: 0.2
+  scan_window_seconds: 60
+  scan_unique_dst_threshold: 10
+  scan_unique_port_threshold: 20
+  bidirectional_window_seconds: 60   # pair (A→B) with (B→A) within this window
+
+logging:
+  level: INFO             # DEBUG | INFO | WARNING | ERROR
+  dir: ./logs
+  max_file_size_mb: 50
+  backup_count: 5
+  console_output: true
+  json_format: false      # structured JSON log lines
+
+dynamic_threshold:
+  enabled: true
+  update_interval_seconds: 300
+  multiplier: 1.5
+  min_threshold: 0.0
+  max_threshold: 10.0
