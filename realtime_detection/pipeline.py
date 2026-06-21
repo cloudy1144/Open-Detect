@@ -15,7 +15,7 @@ from .flow_manager import FlowData, FlowManager
 from .health import HealthChecker, MetricsCollector
 from .logger import get_logger
 from .model_adapter import InferenceConfig, OpenDetectInferenceAdapter
-from .preprocess import build_gray_image
+from .preprocess import build_gray_image, mask_flow_ips
 from .protocol_parser import extract_protocol_metadata
 
 logger = get_logger()
@@ -43,6 +43,8 @@ class DetectionPipeline:
         recon_threshold: float = 0.15,
         bg_ratio: float = 0.7,
         db_path: Optional[str] = None,
+        enable_ip_masking: bool = False,
+        ip_mask_type: str = "private",
     ):
         # Load defaults from config.yaml for any unspecified parameter
         try:
@@ -69,6 +71,8 @@ class DetectionPipeline:
         )
         self.export_dir = export_dir
         self.enable_export = enable_export
+        self.enable_ip_masking = enable_ip_masking
+        self.ip_mask_type = ip_mask_type
 
         # Dynamic threshold integration
         self.threshold_manager = DynamicThresholdManager(
@@ -118,6 +122,9 @@ class DetectionPipeline:
         if self.flow_manager.is_flow_processed(flow.flow_id):
             self.metrics.inc_flows_total()
             return flow
+
+        if self.enable_ip_masking:
+            flow = mask_flow_ips(flow, self.ip_mask_type)
 
         if flow.gray_img is None:
             flow.gray_img = build_gray_image(flow.packets_data)
