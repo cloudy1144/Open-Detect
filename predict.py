@@ -221,10 +221,15 @@ def predict(model, input_data, top_k=5, threshold=2.24, temperature=1.0,
             reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
         if bg_ratio > 0 and commit_ratio > bg_ratio:
             reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+        # Confidence for unknown: inversely proportional to how far beyond threshold.
+        # At threshold, confidence ~0.95; at 4× threshold, confidence ~0.40.
+        excess = max(0.0, min_euclidean - effective_threshold)
+        unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
+
         return [{
             "class": UNKNOWN_NAME,
             "label": UNKNOWN_LABEL,
-            "confidence": 1.0,
+            "confidence": unknown_conf,
             "origin": "unknown",
             "is_unknown": True,
             "distance": round(min_euclidean, 4),
@@ -328,10 +333,12 @@ def predict_batch(model, images: list, top_k: int = 1, threshold: float = 2.24,
                 reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
             if bg_ratio > 0 and commit_ratio > bg_ratio:
                 reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+            excess = max(0.0, min_euclidean - effective_threshold)
+            unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
             all_results.append([{
                 "class": UNKNOWN_NAME,
                 "label": UNKNOWN_LABEL,
-                "confidence": 1.0,
+                "confidence": unknown_conf,
                 "origin": "unknown",
                 "is_unknown": True,
                 "distance": round(min_euclidean, 4),
@@ -342,7 +349,7 @@ def predict_batch(model, images: list, top_k: int = 1, threshold: float = 2.24,
                 "unknown_reason": " | ".join(reasons),
             }])
         else:
-            confidence = torch.sigmoid(-euclidean_dist / temperature)
+            confidence = F.softmax(-euclidean_dist / temperature, dim=0)
             topk_conf, topk_indices = torch.topk(confidence, min(top_k, len(confidence)))
             topk_dists = euclidean_dist[topk_indices]
 

@@ -1,0 +1,42 @@
+FROM python:3.10-slim
+
+LABEL description="Open-Detect realtime network threat detection engine"
+
+# Install system dependencies for Scapy and networking
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tcpdump \
+    libpcap-dev \
+    iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies (CPU-only torch for smaller image)
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    numpy>=1.20.0 \
+    Pillow>=8.0.0 \
+    tqdm>=4.60.0 \
+    scapy>=2.5.0 \
+    scikit-learn>=1.0.0 \
+    pyyaml>=6.0 \
+    && pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Copy source code
+COPY model.py train.py test.py predict.py utils.py ./
+COPY networks/ networks/
+COPY data/ data/
+COPY realtime_detection/ realtime_detection/
+COPY save_model/ save_model/
+
+# Copy entrypoint
+COPY tests/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Create directories for shared outputs
+RUN mkdir -p /app/logs /app/abnormal_flows
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["/app/entrypoint.sh"]

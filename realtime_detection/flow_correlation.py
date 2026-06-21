@@ -29,14 +29,14 @@ logger = get_logger()
 class CorrelationConfig:
     # Beaconing detection
     beacon_window_seconds: int = 300           # 观察窗口 (5 minutes)
-    beacon_min_connections: int = 5             # 最少连接数才触发检测
-    beacon_max_jitter_ratio: float = 0.2        # 间隔抖动 < 20% 均值 → beaconing
-    beacon_min_interval_seconds: float = 1.0    # 最小间隔, 排除 burst
+    beacon_min_connections: int = 3             # 最少连接数才触发检测
+    beacon_max_jitter_ratio: float = 0.3        # 间隔抖动 < 30% 均值 → beaconing
+    beacon_min_interval_seconds: float = 0.5    # 最小间隔, 排除 burst
 
     # Scanning detection
-    scan_window_seconds: int = 60               # 观察窗口 (1 minute)
-    scan_unique_dst_threshold: int = 10         # 目标 IP 数 ≥ 10  → 扫描
-    scan_unique_port_threshold: int = 20        # 目标端口数 ≥ 20 → 端口扫描
+    scan_window_seconds: int = 120              # 观察窗口 (2 minutes)
+    scan_unique_dst_threshold: int = 5          # 目标 IP 数 ≥ 5  → 扫描
+    scan_unique_port_threshold: int = 5         # 目标端口数 ≥ 5 → 端口扫描
 
     # Data exfiltration
     exfil_window_seconds: int = 300             # 观察窗口 (5 minutes)
@@ -107,25 +107,34 @@ class BeaconingDetector:
         jitter = std_interval / mean_interval
 
         if jitter < self.config.beacon_max_jitter_ratio:
+            # Severity-based alert level
+            conn_count = len(timestamps)
+            if conn_count >= 8 or jitter < 0.05:
+                level = "CRITICAL"
+            elif conn_count < 5:
+                level = "INFO"
+            else:
+                level = "WARNING"
+
             return CorrelationAlert(
                 alert_id=f"beacon-{src_ip}-{dst_ip}-{int(time.time())}",
                 alert_type="beaconing",
                 src_ip=src_ip,
                 description=(
                     f"C2 Beaconing detected: {src_ip} -> {dst_ip}, "
-                    f"{len(timestamps)} connections in {self.config.beacon_window_seconds}s, "
+                    f"{conn_count} connections in {self.config.beacon_window_seconds}s, "
                     f"interval={mean_interval:.1f}s ±{std_interval:.1f}s (jitter={jitter:.2%})"
                 ),
                 evidence={
                     "dst_ip": dst_ip,
-                    "connection_count": len(timestamps),
+                    "connection_count": conn_count,
                     "mean_interval": round(mean_interval, 2),
                     "std_interval": round(std_interval, 2),
                     "jitter_ratio": round(jitter, 4),
                     "window_seconds": self.config.beacon_window_seconds,
                 },
                 timestamp=time.time(),
-                alert_level="WARNING",
+                alert_level=level,
             )
         return None
 
@@ -200,6 +209,7 @@ class ScanningDetector:
         total_conns = len(self._detail_history[src_ip])
 
         if unique_dsts >= self.config.scan_unique_dst_threshold:
+            level = "CRITICAL" if unique_dsts >= 15 else "WARNING"
             return CorrelationAlert(
                 alert_id=f"scan-{src_ip}-{int(time.time())}",
                 alert_type="scanning",
@@ -215,10 +225,11 @@ class ScanningDetector:
                     "window_seconds": self.config.scan_window_seconds,
                 },
                 timestamp=time.time(),
-                alert_level="WARNING",
+                alert_level=level,
             )
 
         if unique_ports >= self.config.scan_unique_port_threshold:
+            level = "CRITICAL" if unique_ports >= 15 else "WARNING"
             return CorrelationAlert(
                 alert_id=f"portscan-{src_ip}-{int(time.time())}",
                 alert_type="scanning",
@@ -234,7 +245,7 @@ class ScanningDetector:
                     "window_seconds": self.config.scan_window_seconds,
                 },
                 timestamp=time.time(),
-                alert_level="WARNING",
+                alert_level=level,
             )
         return None
 
@@ -403,6 +414,16 @@ class BidirectionalPairer:
         abnormal_ir = ir_a if a_abnormal else ir_b
         normal_ir = ir_b if a_abnormal else ir_a
 
+        # Severity: CRITICAL for known malware in one direction, INFO for borderline
+        abnormal_type = abnormal_ir.get("attack_type", "")
+        abnormal_dist = abnormal_ir.get("distance", 99.0)
+        if abnormal_type == "known_malware" or abnormal_dist < 1.0:
+            level = "CRITICAL"
+        elif abnormal_dist > 4.0:
+            level = "INFO"
+        else:
+            level = "WARNING"
+
         return CorrelationAlert(
             alert_id=f"bidir-{abnormal_flow.flow_id}-{int(time.time())}",
             alert_type="bidirectional_asymmetry",
@@ -430,7 +451,7 @@ class BidirectionalPairer:
                 },
             },
             timestamp=time.time(),
-            alert_level="WARNING",
+            alert_level=level,
         )
 
     def _expire_stale(self) -> None:
