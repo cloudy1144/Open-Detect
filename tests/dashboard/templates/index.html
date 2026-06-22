@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open-Detect 仪表盘</title>
+<style>
+  :root {
+    --bg: #0f1923;
+    --panel: #1a2733;
+    --border: #243647;
+    --text: #c8d6e5;
+    --text-dim: #6b7f99;
+    --accent: #45aaf2;
+    --critical: #e74c3c;
+    --warning: #f39c12;
+    --info: #3498db;
+    --success: #2ecc71;
+    --pending: #4e5b6c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    font-size: 15px;
+    line-height: 1.4;
+    padding: 16px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 16px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 22px; font-weight: 600; color: var(--accent); }
+  .header .update-time { color: var(--text-dim); font-size: 13px; }
+  .header .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; background: var(--pending);
+  }
+  .status-dot.healthy { background: var(--success); }
+  .status-dot.unhealthy { background: var(--critical); }
+
+  /* ── Compare panels ── */
+  .compare-header { display: flex; gap: 16px; margin-bottom: 16px; }
+  .compare-panel { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .compare-panel.model { border-left: 3px solid var(--accent); }
+  .compare-panel.rule { border-left: 3px solid var(--warning); }
+  .compare-panel h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display:flex; align-items: baseline; gap: 6px; }
+  .compare-panel h3 .tag { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+  .compare-stat { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .compare-stat .label { font-size: 14px; color: var(--text-dim); }
+  .compare-stat .value { font-size: 34px; font-weight: 700; }
+  .compare-stat .value.model { color: var(--accent); }
+  .compare-stat .value.rule { color: var(--warning); }
+  .compare-stat .suffix { font-size: 12px; color: var(--text-dim); margin-left: 3px; }
+  .rule-check { color: var(--success); margin-right: 6px; font-weight: 700; }
+
+  /* ── Attack buttons ── */
+  .atk-row { display: flex; gap: 16px; }
+  .atk-col { flex: 1; }
+  .atk-main { padding: 20px 24px !important; font-size: 18px !important; font-weight: 700 !important; border-radius: 8px !important; width: 100%; text-align: center; transition: all 0.2s; }
+  .atk-main.rule { border: 2px solid var(--warning) !important; color: var(--warning) !important; background: rgba(243,156,18,0.08) !important; }
+  .atk-main.rule:hover:not(:disabled) { background: rgba(243,156,18,0.2) !important; }
+  .atk-main.model { border: 2px solid var(--accent) !important; color: var(--accent) !important; background: rgba(69,170,242,0.08) !important; }
+  .atk-main.model:hover:not(:disabled) { background: rgba(69,170,242,0.2) !important; }
+  .atk-main:disabled { opacity: 0.4; cursor: not-allowed; }
+  .atk-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; text-align: center; line-height: 1.5; }
+  @keyframes progressPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .status-dot.running-pulse { animation: progressPulse 1.2s ease-in-out infinite; }
+
+  /* Base panel / table / button styles */
+  .panel-box {
+    flex: 1; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 14px;
+  }
+  .panel-box h3 { font-size: 14px; color: var(--text-dim); margin-bottom: 10px; text-transform: uppercase; }
+  .alert-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .alert-table th {
+    text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border);
+    color: var(--text-dim); font-weight: 500; position: sticky; top: 0;
+    background: var(--panel);
+  }
+  .alert-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .alert-table tr:hover { background: rgba(69,170,242,0.05); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+  }
+  .badge-critical { background: rgba(231,76,60,0.2); color: var(--critical); }
+  .badge-warning { background: rgba(243,156,18,0.2); color: var(--warning); }
+  .badge-info { background: rgba(52,152,219,0.2); color: var(--info); }
+  .table-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .btn {
+    padding: 8px 14px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); cursor: pointer;
+    font-size: 14px; font-family: inherit; transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Compare table ── */
+  .compare-table th { font-size: 12px; }
+  .compare-table td { font-size: 12px; padding: 8px 6px; }
+  .hdr-rule { text-align: center; color: var(--warning); border-bottom: 2px solid var(--warning) !important; font-size: 14px; }
+  .hdr-model { text-align: center; color: var(--accent); border-bottom: 2px solid var(--accent) !important; font-size: 14px; }
+  .sub-rule { border-left: 2px solid rgba(243,156,18,0.2); color: var(--text-dim); font-size: 11px; font-weight: 400; }
+  .sub-model { border-left: 2px solid rgba(69,170,242,0.2); color: var(--text-dim); font-size: 11px; font-weight: 400; }
+  td.col-rule-first { border-left: 2px solid rgba(243,156,18,0.15); }
+  td.col-rule { background: rgba(243,156,18,0.02); }
+  td.col-model-first { border-left: 2px solid rgba(69,170,242,0.15); }
+  td.col-model { background: rgba(69,170,242,0.02); }
+  td.cell-na { color: var(--text-dim); font-style: italic; }
+  td.det-correct { color: var(--success); font-weight: 600; }
+  td.det-incorrect { color: var(--critical); }
+  td.det-neutral { color: var(--text-dim); }
+
+  .footer { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <span class="status-dot" id="status-dot"></span>
+    <h1>Open-Detect 仪表盘</h1>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span id="demo-indicator" onclick="toggleDemo()" style="cursor:pointer;font-size:13px;color:var(--text-dim);">
+      ● 数据生成中
+    </span>
+    <button class="btn" onclick="stopAttack()" id="btn-stop" style="font-size:12px;padding:4px 10px;">停止</button>
+    <span id="lastUpdate" class="update-time">--</span>
+  </div>
+</div>
+
+<!-- Top: Compare panels -->
+<div class="compare-header">
+  <!-- Left: Model detection panel -->
+  <div class="compare-panel model">
+    <h3>模型检测 <span class="tag">AI 深度学习</span></h3>
+    <div class="compare-stat">
+      <span class="label">正确检测</span>
+      <span><span class="value model" id="cv-model-correct" style="color:var(--success)">--</span><span class="suffix">条</span></span>
+    </div>
+    <div class="compare-stat">
+      <span class="label">错误检测</span>
+      <span><span class="value model" id="cv-model-incorrect" style="color:var(--critical)">--</span><span class="suffix">条</span></span>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+      <div class="badge badge-critical" style="display:inline-block;margin-right:4px;">CRITICAL</div>
+      <span style="font-size:11px;color:var(--text-dim);">已知恶意软件</span>
+      <br>
+      <div class="badge badge-warning" style="display:inline-block;margin-right:4px;margin-top:4px;">WARNING</div>
+      <span style="font-size:11px;color:var(--text-dim);">未知攻击 / 可疑工具</span>
+    </div>
+  </div>
+  
+  <!-- Right: Rule detection panel -->
+  <div class="compare-panel rule">
+    <h3>规则检测 <span class="tag">预定义模式</span></h3>
+    <div class="compare-stat">
+      <span class="label">正确检测</span>
+      <span><span class="value rule" id="cv-rule-correct" style="color:var(--success)">--</span><span class="suffix">条</span></span>
+    </div>
+    <div class="compare-stat">
+      <span class="label">错误检测</span>
+      <span><span class="value rule" id="cv-rule-incorrect" style="color:var(--critical)">--</span><span class="suffix">条</span></span>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+      <span style="font-size:11px;color:var(--text-dim);">基于频率/端口/间隔等预定义阈值</span>
+      <br>
+      <span style="font-size:11px;color:var(--text-dim);margin-top:4px;display:inline-block;">
+        仅能检测3种已知行为模式，无法识别未知攻击
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- Middle: Two attack buttons -->
+<div class="panel-box" style="margin-bottom:16px;">
+  <h3>发起攻击测试</h3>
+  <div class="atk-row">
+    <div class="atk-col">
+      <button class="btn atk-main rule" onclick="triggerAttack('rule')" id="btn-rule">
+        ▶ 针对规则检测的攻击
+      </button>
+      <div class="atk-hint">包含：端口扫描、SYN Flood、C2通信、正常流量</div>
+    </div>
+    <div class="atk-col">
+      <button class="btn atk-main model" onclick="triggerAttack('model')" id="btn-model">
+        ▶ 针对模型检测的攻击
+      </button>
+      <div class="atk-hint">包含：已知恶意(Zeus/CobaltStrike等)、正常流量(Gmail/FTP等)、未知攻击(SSH爆破/DNS隧道/Heartbleed/挖矿等)</div>
+    </div>
+  </div>
+  <div id="status-bar" style="margin-top:10px;font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:8px;">
+    <span id="status-dot2" class="status-dot" style="background:var(--pending);"></span>
+    <span id="status-msg">就绪 — 点击上方按钮发起攻击</span>
+    <span id="status-elapsed" style="margin-left:auto;"></span>
+  </div>
+</div>
+
+<!-- Bottom: Compare result table -->
+<div class="panel-box">
+  <h3>攻击结果 <span id="result-count" style="font-weight:400;color:var(--text-dim);"></span></h3>
+  <div class="table-wrap" style="max-height:500px;">
+    <table class="alert-table compare-table" id="result-table">
+      <thead>
+        <tr>
+          <th rowspan="2" style="width:60px;">时间</th>
+          <th rowspan="2" style="width:80px;">攻击类型</th>
+          <th rowspan="2" style="width:120px;">源 → 目标</th>
+          <th colspan="2" class="hdr-rule">规则检测</th>
+          <th colspan="3" class="hdr-model">模型检测</th>
+        </tr>
+        <tr>
+          <th class="sub-rule">类型</th><th class="sub-rule">等级</th>
+          <th class="sub-model">类型</th><th class="sub-model">等级</th><th class="sub-model">置信度</th>
+        </tr>
+      </thead>
+      <tbody id="result-table-body">
+        <tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:24px;">暂无数据 — 点击上方按钮发起攻击</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">Open-Detect Test Dashboard · 每 3 秒自动刷新</div>
+
+<script>
+var ATK_MAP = {
+  rule: {
+    name: '规则检测攻击',
+    endpoint: '/api/test/trigger',
+    method: 'POST',
+    body: JSON.stringify({ source: 'rule' }),
+    attack_type: 'rule_suite'
+  },
+  model: {
+    name: '模型检测攻击',
+    endpoint: '/api/test/trigger',
+    method: 'POST',
+    body: JSON.stringify({ source: 'model' }),
+    attack_type: 'model_suite'
+  }
+};
+
+function triggerAttack(key) {
+  var atk = ATK_MAP[key];
+  if (!atk) return;
+  logStatus('发起: ' + atk.name + ' ...');
+  disableButtons(true);
+  fetch(atk.endpoint, { method: atk.method, headers: { 'Content-Type': 'application/json' }, body: atk.body })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) { logStatus(atk.name + ' — 已启动 (' + d.total + ' 个攻击)'); }
+      else { logStatus(atk.name + ' — 失败: ' + (d.message || '')); disableButtons(false); }
+    })
+    .catch(function(e) { logStatus(atk.name + ' — 错误'); disableButtons(false); });
+}
+
+function disableButtons(dis) {
+  document.getElementById('btn-rule').disabled = dis;
+  document.getElementById('btn-model').disabled = dis;
+}
+
+function logStatus(msg) {
+  document.getElementById('status-msg').textContent = msg;
+}
+
+function stopAttack() {
+  fetch('/api/attack/stop', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function() { disableButtons(false); });
+}
+
+var _demoActive = true;
+function toggleDemo() {
+  var ep = _demoActive ? '/api/demo/pause' : '/api/demo/resume';
+  fetch(ep, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { _demoActive = d.active; updateDemoUI(); });
+}
+function syncDemoStatus() {
+  fetch('/api/demo/status')
+    .then(function(r) { return r.json(); })
+    .then(function(d) { _demoActive = d.active; updateDemoUI(); });
+}
+function updateDemoUI() {
+  var el = document.getElementById('demo-indicator');
+  el.innerHTML = _demoActive ? '● 数据生成中' : '○ 数据已暂停';
+  el.style.color = _demoActive ? 'var(--success)' : 'var(--text-dim)';
+}
+
+function fmtTime(ts) { var d = new Date(ts * 1000); return d.toTimeString().substring(0,8); }
+function fmtUptime(s) { s = Math.floor(s); var h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60; return (h>0?h+':':'') + (m<10&&h>0?'0':'') + m + ':' + (ss<10?'0':'') + ss; }
+
+function loadSummary() {
+  fetch('/api/summary')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var dot = document.getElementById('status-dot');
+      dot.className = 'status-dot' + (d.healthy ? ' healthy' : ' unhealthy');
+      document.getElementById('lastUpdate').textContent = '更新 ' + fmtTime(d.server_time);
+      document.getElementById('result-count').textContent = '(共 ' + (d.alerts_total || 0) + ' 条)';
+
+      // Model detection: correct / incorrect counts
+      document.getElementById('cv-model-correct').textContent = d.model_correct || 0;
+      document.getElementById('cv-model-incorrect').textContent = d.model_incorrect || 0;
+
+      // Rule detection: correct / incorrect counts
+      document.getElementById('cv-rule-correct').textContent = d.rule_correct || 0;
+      document.getElementById('cv-rule-incorrect').textContent = d.rule_incorrect || 0;
+    })
+    .catch(function() {
+      document.getElementById('status-dot').className = 'status-dot unhealthy';
+    });
+}
+
+function loadAlerts() {
+  fetch('/api/alerts?limit=50')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      renderCompareTable(d.alerts || []);
+    })
+    .catch(function() {});
+}
+
+function renderCompareTable(alerts) {
+  var tbody = document.getElementById('result-table-body');
+  if (!alerts.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:24px;">暂无数据 — 点击上方按钮发起攻击</td></tr>';
+    document.getElementById('result-count').textContent = '(共 0 条)';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < alerts.length; i++) {
+    var a = alerts[i];
+    var extra = {};
+    try { extra = typeof a.extra === 'string' ? JSON.parse(a.extra) : (a.extra || {}); } catch(e) {}
+    var mr = extra.model_result || {};
+    var rr = extra.rule_result || {};
+    
+    function levelBadge(lv) {
+      var cls = lv === 'CRITICAL' ? 'badge-critical' : lv === 'WARNING' ? 'badge-warning' : 'badge-info';
+      return '<span class="badge ' + cls + '">' + (lv || '—') + '</span>';
+    }
+    function confStr(cf) {
+      return cf != null ? (cf * 100).toFixed(0) + '%' : '<span class="cell-na">—</span>';
+    }
+    function typeStr(v, r) {
+      var cn = (r && r.class_name) ? r.class_name : v;
+      return cn || '<span class="cell-na">—</span>';
+    }
+    // Return 'correct' / 'incorrect' / 'neutral' CSS class for a detection result.
+    // isModel=true: model column (unknown is correct for un-trained rule attacks)
+    // isModel=false: rule column (exact match only for rule attacks)
+    function detClass(detResult, expectedType, isModel) {
+      if (!detResult || !detResult.attack_type) return 'det-neutral';
+      var dt = detResult.attack_type;
+      // Model never trained on rule attack types → unknown_attack is correct
+      if (isModel && (expectedType === 'port_scan' || expectedType === 'syn_flood' || expectedType === 'c2_beaconing')) {
+        return dt === 'unknown_attack' ? 'det-correct' : 'det-incorrect';
+      }
+      if (expectedType === 'known_malware') {
+        return (dt === 'known_malware' || dt === 'suspicious_tool') ? 'det-correct' : 'det-incorrect';
+      }
+      if (expectedType === 'normal' || expectedType === 'unknown_attack') {
+        return dt === expectedType ? 'det-correct' : 'det-incorrect';
+      }
+      // Rule detection on rule attacks: exact match
+      return dt === expectedType ? 'det-correct' : 'det-incorrect';
+    }
+    // Render the attack type column — show intention, not model guess
+    function attackTypeLabel(t) {
+      var m = {'known_malware':'已知恶意','normal':'正常流量','unknown_attack':'未知攻击',
+               'port_scan':'端口扫描','syn_flood':'SYN Flood','c2_beaconing':'C2通信'};
+      return m[t] || t;
+    }
+    var atLabel = attackTypeLabel(a.attack_type);
+    var rCls = detClass(rr, a.attack_type, false);
+    var mCls = detClass(mr, a.attack_type, true);
+    // Rule type display: red NULL when model attack (unknown_attack/known_malware)
+    // has rule that can't determine type (INFO level)
+    var ruleTypeHtml, ruleTypeCls = rCls;
+    if ((a.attack_type === 'unknown_attack' || a.attack_type === 'known_malware') && rr.alert_level === 'INFO') {
+      ruleTypeHtml = '<span style="color:var(--critical);font-weight:600;">NULL</span>';
+      ruleTypeCls = 'det-incorrect';
+    } else {
+      ruleTypeHtml = typeStr(rr.attack_type);
+    }
+    
+    html += '<tr>' +
+      '<td>' + fmtTime(a.timestamp) + '</td>' +
+      '<td>' + (atLabel || '<span class="cell-na">—</span>') + '</td>' +
+      '<td>' + (a.src_ip || '?') + ':' + (a.src_port || 0) + ' → ' + (a.dst_ip || '?') + ':' + (a.dst_port || 0) + '</td>' +
+      '<td class="col-rule-first ' + ruleTypeCls + '">' + ruleTypeHtml + '</td>' +
+      '<td class="col-rule">' + levelBadge(rr.alert_level) + '</td>' +
+      '<td class="col-model-first ' + mCls + '">' + typeStr(mr.attack_type, mr) + '</td>' +
+      '<td class="col-model">' + levelBadge(mr.alert_level) + '</td>' +
+      '<td class="col-model">' + confStr(mr.confidence) + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+function checkAttackStatus() {
+  fetch('/api/attack/status')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var dot2 = document.getElementById('status-dot2');
+      if (d.running) {
+        dot2.className = 'status-dot running-pulse';
+        dot2.style.background = 'var(--warning)';
+        document.getElementById('status-msg').textContent = '执行中: ' + (d.name || '—');
+        document.getElementById('status-elapsed').textContent = '耗时 ' + fmtUptime(d.elapsed_s || 0);
+        disableButtons(true);
+      } else {
+        dot2.className = 'status-dot';
+        dot2.style.background = 'var(--pending)';
+        document.getElementById('status-msg').textContent = '就绪 — 点击上方按钮发起攻击';
+        document.getElementById('status-elapsed').textContent = '';
+        disableButtons(false);
+      }
+    })
+    .catch(function() {});
+}
+
+loadSummary();
+loadAlerts();
+checkAttackStatus();
+syncDemoStatus();
+setInterval(loadSummary, 3000);
+setInterval(loadAlerts, 3000);
+setInterval(checkAttackStatus, 1000);
+setInterval(syncDemoStatus, 10000);
+</script>
+
+</body>
+</html>

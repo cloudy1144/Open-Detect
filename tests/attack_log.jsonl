@@ -1,0 +1,6 @@
+{"attack_id": "replay-normal-1781768641", "attack_type": "pcap_replay_normal", "target": "127.0.0.1", "start_time": 1781768644.7081556, "duration_s": 3.0, "extra": {"pcap_file": "normal_traffic.pcap", "synthetic": false}}
+{"attack_id": "replay-known_malware-1781768665", "attack_type": "pcap_replay_known_malware", "target": "127.0.0.1", "start_time": 1781768670.7842371, "duration_s": 5.0, "extra": {"pcap_file": "malware_sample.pcap", "synthetic": false}}
+{"attack_id": "scan-1781768705", "attack_type": "port_scan", "target": "127.0.0.1", "start_time": 1781768707.0576913, "duration_s": 1.55, "extra": {"ports_scanned": 31, "range": "20-50"}}
+{"attack_id": "replay-tls13-1781768729", "attack_type": "pcap_replay_tls13", "target": "127.0.0.1", "start_time": 1781768732.8388736, "duration_s": 3.0, "extra": {"pcap_file": "tls13_encrypted.pcap", "synthetic": false}}
+{"attack_id": "replay-known_malware-1781768758", "attack_type": "pcap_replay_known_malware", "target": "127.0.0.1", "start_time": 1781768763.0869205, "duration_s": 5.0, "extra": {"pcap_file": "malware_sample.pcap", "synthetic": false}}
+{"attack_id": "beacon-1781768772", "attack_type": "c2_beaconing", "target": "127.0.0.1:8443", "start_time": 1781768787.519973, "duration_s": 15.0, "extra": {"connections": 6, "interval_s": 3.0, "expected_jitter": 0}}
