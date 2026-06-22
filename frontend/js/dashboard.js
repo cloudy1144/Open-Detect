@@ -351,8 +351,8 @@ function handleWSMessage(data) {
             State.flows.push(flow);
 
             // 限制内存
-            if (State.flows.length > 2000) {
-                State.flows.splice(0, State.flows.length - 1000);
+            if (State.flows.length > 800) {
+                State.flows.splice(0, State.flows.length - 800);
             }
 
             // 更新流量表格
