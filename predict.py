@@ -148,7 +148,10 @@ def load_model(model_path, device=None):
 # ============================================================
 # 核心推理
 # ============================================================
-def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
+def predict(model, input_data, top_k=5, threshold=2.24, temperature=1.0,
+            class_thresholds: dict[int, float] | None = None,
+            recon_threshold: float = 0.15,
+            bg_ratio: float = 0.7):
     """
     对输入样本进行推理.
 
@@ -156,14 +159,19 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
         model: OpenDetectNet
         input_data: np.ndarray(32,32) / PIL.Image / str路径
         top_k: 返回前 K 个最可能的类别
-        threshold: 未知攻击距离阈值（min_dist > threshold → Unknown）
+        threshold: 未知攻击欧氏距离阈值（默认 2.24 ≈ sqrt(5.0)，
+                   与旧版「平方距离 5.0」等价）
         temperature: softmax 温度参数
+        class_thresholds: 每类专属阈值，如 {31: 2.5, 15: 1.8}。
+        recon_threshold: 重构 MSE 阈值（默认 0.15），0=关闭。
+        bg_ratio: 背景原型比率阈值（默认 0.7），0=关闭。
+                  样本到最近原型距离 vs 到所有原型质心距离的比值。
+                  > bg_ratio → 样本不够"专一"，判为 unknown。
+                  解决模型只在闭集上训练、缺乏拒绝能力的根本问题。
 
     Returns:
-        list[dict]: [
-            {"class": str, "label": int, "confidence": float, "origin": str, "is_unknown": bool},
-            ...
-        ]
+        list[dict]: 每个结果含 class, label, confidence, origin,
+                    is_unknown, distance, recon_error, recon_suspicious, bg_distance
     """
     device = next(model.parameters()).device
     tensor = preprocess(input_data, device=device)
@@ -171,12 +179,54 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
     with torch.no_grad():
         latent_z, dist, kl_div, recon_x = model(tensor)
 
-    # dist shape: (1, n_classes)
-    dist = dist.squeeze(0)          # (44,)
-    min_dist = dist.min().item()
-    min_label = dist.argmin().item()
-    min_euclidean = float(np.sqrt(min_dist))  # 欧氏距离
+    # 重构误差: MSE(原图, 重建图)
+    recon_error = float(torch.nn.functional.mse_loss(recon_x, tensor).item())
+    recon_suspicious = recon_threshold > 0 and recon_error > recon_threshold
 
+    # dist: (1, n_classes) 平方欧氏距离 → 统一转为欧氏距离
+    dist = dist.squeeze(0)                             # (n_classes,)
+    euclidean_dist = torch.sqrt(dist)                  # 欧氏距离 (n_classes,)
+    min_euclidean = euclidean_dist.min().item()
+    min_label = euclidean_dist.argmin().item()
+
+    # ---- 背景原型检测 ----
+    # 计算所有原型质心，样本到质心的距离作为"背景距离"
+    prototypes = model.prototypes                      # (n_classes, latent_dim)
+    bg_centroid = prototypes.mean(dim=0)               # 原型质心 (latent_dim,)
+    latent_vec = latent_z.squeeze(0)                   # (latent_dim,)
+    bg_sq_dist = torch.sum((latent_vec - bg_centroid) ** 2).item()
+    bg_distance = float(np.sqrt(bg_sq_dist))           # 欧氏距离到背景点
+    # 比率: 越小越"专一"，越大越"模糊"
+    commit_ratio = min_euclidean / bg_distance if bg_distance > 0 else 0.0
+
+    # 类特定阈值优先，回退到全局阈值
+    if class_thresholds and min_label in class_thresholds:
+        effective_threshold = class_thresholds[min_label]
+    else:
+        effective_threshold = threshold
+
+    # 未知攻击检测（三重信号：绝对距离远 OR 重构差 OR 不够专一）
+    is_unknown = (
+        min_euclidean > effective_threshold
+        or recon_suspicious
+        or (bg_ratio > 0 and commit_ratio > bg_ratio)
+    )
+
+    if is_unknown:
+        # 记录触发原因用于调试
+        reasons = []
+        if min_euclidean > effective_threshold:
+            reasons.append(f"distance({min_euclidean:.3f} > {effective_threshold})")
+        if recon_suspicious:
+            reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
+        if bg_ratio > 0 and commit_ratio > bg_ratio:
+            reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+        # Confidence for unknown: inversely proportional to how far beyond threshold.
+        # At threshold, confidence ~0.95; at 4× threshold, confidence ~0.40.
+        excess = max(0.0, min_euclidean - effective_threshold)
+        unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
+
+<<<<<<< HEAD
     # 未知攻击检测
     if min_dist > threshold:
         # 置信度 = 基于超出阈值的程度，映射到 [0.5, 0.99]
@@ -187,19 +237,28 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
             "class": UNKNOWN_NAME,
             "label": UNKNOWN_LABEL,
             "confidence": round(unknown_conf, 6),
+=======
+        return [{
+            "class": UNKNOWN_NAME,
+            "label": UNKNOWN_LABEL,
+            "confidence": unknown_conf,
+>>>>>>> test_function
             "origin": "unknown",
             "is_unknown": True,
             "distance": round(min_euclidean, 4),
+            "recon_error": round(recon_error, 6),
+            "recon_suspicious": recon_suspicious,
+            "bg_distance": round(bg_distance, 4),
+            "commit_ratio": round(commit_ratio, 4),
+            "unknown_reason": " | ".join(reasons),
         }]
 
-    # 计算置信度: softmax(-sqrt(dist) / temperature)
-    # 开根号将平方欧氏距离转为欧氏距离，温度默认 1.0 即可
-    euclidean_dist = torch.sqrt(dist)
-    confidence = F.softmax(-euclidean_dist / temperature, dim=0)  # (44,)
+    # 置信度: softmax(-欧氏距离 / temperature)
+    confidence = F.softmax(-euclidean_dist / temperature, dim=0)
 
     # Top-K
     topk_conf, topk_indices = torch.topk(confidence, min(top_k, len(confidence)))
-    topk_dists = euclidean_dist[topk_indices]  # 各自的距离
+    topk_dists = euclidean_dist[topk_indices]
 
     results = []
     for conf, idx, d in zip(topk_conf.tolist(), topk_indices.tolist(), topk_dists.tolist()):
@@ -211,9 +270,120 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0):
             "origin": CLASS_ORIGIN.get(class_name, "unknown"),
             "is_unknown": False,
             "distance": round(d, 4),
+            "recon_error": round(recon_error, 6),
+            "recon_suspicious": recon_suspicious,
+            "bg_distance": round(bg_distance, 4),
+            "commit_ratio": round(commit_ratio, 4),
         })
 
     return results
+
+
+def predict_batch(model, images: list, top_k: int = 1, threshold: float = 2.24,
+                  temperature: float = 1.0,
+                  class_thresholds: dict[int, float] | None = None,
+                  recon_threshold: float = 0.15,
+                  bg_ratio: float = 0.7) -> list[list[dict]]:
+    """Batch inference for multiple images in a single forward pass.
+
+    Args:
+        model: OpenDetectNet
+        images: list of np.ndarray(32,32), PIL.Image, or paths
+        (other args same as predict())
+
+    Returns:
+        list of lists, one per input image: [
+            [{"class": ..., ...}, ...],   # results for image 0
+            [{"class": ..., ...}, ...],   # results for image 1
+        ]
+    """
+    device = next(model.parameters()).device
+    tensors = torch.stack([preprocess(img, device=device) for img in images])  # (B, 1, 1, 32, 32)
+    tensors = tensors.squeeze(1)  # -> (B, 1, 32, 32)
+
+    with torch.no_grad():
+        latent_z, dist, kl_div, recon_x = model(tensors)
+
+    # dist: (B, n_classes), recon_x: (B, 1, 32, 32)
+    all_results = []
+    for b in range(len(images)):
+        single_latent = latent_z[b:b + 1]
+        single_dist = dist[b]                          # (n_classes,)
+        single_recon = recon_x[b:b + 1]
+        single_input = tensors[b:b + 1]
+
+        recon_error = float(torch.nn.functional.mse_loss(single_recon, single_input).item())
+        recon_suspicious = recon_threshold > 0 and recon_error > recon_threshold
+
+        euclidean_dist = torch.sqrt(single_dist)
+        min_euclidean = euclidean_dist.min().item()
+        min_label = euclidean_dist.argmin().item()
+
+        # Background prototype
+        prototypes = model.prototypes
+        bg_centroid = prototypes.mean(dim=0)
+        latent_vec = single_latent.squeeze(0)
+        bg_sq_dist = torch.sum((latent_vec - bg_centroid) ** 2).item()
+        bg_distance = float(np.sqrt(bg_sq_dist))
+        commit_ratio = min_euclidean / bg_distance if bg_distance > 0 else 0.0
+
+        if class_thresholds and min_label in class_thresholds:
+            effective_threshold = class_thresholds[min_label]
+        else:
+            effective_threshold = threshold
+
+        is_unknown = (
+            min_euclidean > effective_threshold
+            or recon_suspicious
+            or (bg_ratio > 0 and commit_ratio > bg_ratio)
+        )
+
+        if is_unknown:
+            reasons = []
+            if min_euclidean > effective_threshold:
+                reasons.append(f"distance({min_euclidean:.3f} > {effective_threshold})")
+            if recon_suspicious:
+                reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
+            if bg_ratio > 0 and commit_ratio > bg_ratio:
+                reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+            excess = max(0.0, min_euclidean - effective_threshold)
+            unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
+            all_results.append([{
+                "class": UNKNOWN_NAME,
+                "label": UNKNOWN_LABEL,
+                "confidence": unknown_conf,
+                "origin": "unknown",
+                "is_unknown": True,
+                "distance": round(min_euclidean, 4),
+                "recon_error": round(recon_error, 6),
+                "recon_suspicious": recon_suspicious,
+                "bg_distance": round(bg_distance, 4),
+                "commit_ratio": round(commit_ratio, 4),
+                "unknown_reason": " | ".join(reasons),
+            }])
+        else:
+            confidence = F.softmax(-euclidean_dist / temperature, dim=0)
+            topk_conf, topk_indices = torch.topk(confidence, min(top_k, len(confidence)))
+            topk_dists = euclidean_dist[topk_indices]
+
+            results = []
+            for conf, idx, d in zip(topk_conf.tolist(), topk_indices.tolist(), topk_dists.tolist()):
+                class_name = CLASS_NAMES.get(idx, f"Class_{idx}")
+                results.append({
+                    "class": class_name,
+                    "label": idx,
+                    "confidence": round(conf, 6),
+                    "origin": CLASS_ORIGIN.get(class_name, "unknown"),
+                    "is_unknown": False,
+                    "distance": round(d, 4),
+                    "recon_error": round(recon_error, 6),
+                    "recon_suspicious": recon_suspicious,
+                    "bg_distance": round(bg_distance, 4),
+                    "commit_ratio": round(commit_ratio, 4),
+                })
+            all_results.append(results)
+
+    return all_results
 
 
 # ============================================================
@@ -227,8 +397,8 @@ def main():
                         help="输入图片路径 (.png/.jpg) 或 .npz 批量文件")
     parser.add_argument("--top_k", type=int, default=5,
                         help="返回 Top-K 预测结果")
-    parser.add_argument("--threshold", type=float, default=5.0,
-                        help="未知攻击距离阈值 (默认5.0)")
+    parser.add_argument("--threshold", type=float, default=2.24,
+                        help="未知攻击距离阈值 (欧氏距离, 默认 2.24)")
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="softmax 温度参数 (默认1.0)")
     parser.add_argument("--device", type=str, default=None,

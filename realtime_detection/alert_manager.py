@@ -1,10 +1,13 @@
-"""Alert record management and callback dispatch."""
+"""Alert record management with multi-callback dispatch and SQLite persistence."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from .flow_manager import FlowData
@@ -30,26 +33,124 @@ class Alert:
 
 
 class AlertManager:
-    """Store and publish alerts in a thread-safe way."""
+    """Store and publish alerts in a thread-safe way.
 
-    def __init__(self):
+    Supports multiple callbacks (visualization + SIEM + logging simultaneously)
+    and optional SQLite persistence for crash-safe alert storage.
+    """
+
+    def __init__(self, db_path: str | None = None):
         self.alert_history: list[Alert] = []
+        self.alert_callbacks: list[Callable[[Alert], None]] = []
         self.lock = threading.Lock()
-        self.alert_callback: Optional[Callable[[Alert], None]] = None
+        self.db_path = db_path
+        self._db_conn: Optional[sqlite3.Connection] = None
+        if self.db_path:
+            self._init_db()
+
+    # ── SQLite persistence ──────────────────────────────────────────────
+
+    def _init_db(self) -> None:
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
+        self._db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._db_conn.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                alert_id    TEXT PRIMARY KEY,
+                flow_id     TEXT,
+                src_ip      TEXT,
+                dst_ip      TEXT,
+                src_port    INTEGER,
+                dst_port    INTEGER,
+                alert_level TEXT,
+                attack_type TEXT,
+                timestamp   REAL,
+                class_name  TEXT,
+                confidence  REAL,
+                kl_distance REAL,
+                extra       TEXT
+            )
+        """)
+        self._db_conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(timestamp)")
+        self._db_conn.commit()
+
+    def _insert_alert(self, alert: Alert) -> None:
+        if not self._db_conn:
+            return
+        self._db_conn.execute(
+            "INSERT OR IGNORE INTO alerts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                alert.alert_id,
+                alert.flow_id,
+                alert.src_ip,
+                alert.dst_ip,
+                alert.src_port,
+                alert.dst_port,
+                alert.alert_level,
+                alert.attack_type,
+                alert.timestamp,
+                alert.class_name,
+                alert.confidence,
+                alert.kl_distance,
+                json.dumps(alert.extra, default=str),
+            ),
+        )
+        self._db_conn.commit()
+
+    def _query_alerts(self, start_time: float | None, end_time: float | None, limit: int = 500) -> list[Alert]:
+        if not self._db_conn:
+            return []
+        conditions = []
+        params: list = []
+        if start_time is not None:
+            conditions.append("timestamp >= ?")
+            params.append(start_time)
+        if end_time is not None:
+            conditions.append("timestamp <= ?")
+            params.append(end_time)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        rows = self._db_conn.execute(
+            f"SELECT * FROM alerts{where} ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        return [
+            Alert(
+                alert_id=r[0], flow_id=r[1], src_ip=r[2], dst_ip=r[3],
+                src_port=r[4], dst_port=r[5], alert_level=r[6], attack_type=r[7],
+                timestamp=r[8], class_name=r[9], confidence=r[10], kl_distance=r[11],
+                extra=json.loads(r[12]) if r[12] else {},
+            )
+            for r in rows
+        ]
+
+    # ── Callback registration ───────────────────────────────────────────
 
     def register_alert_callback(self, callback: Callable[[Alert], None]) -> None:
-        """Register a downstream consumer, such as a Streamlit view."""
+        """Register a downstream consumer (visualization, SIEM, logging etc.).
 
-        self.alert_callback = callback
+        Multiple callbacks are supported — each receives every alert.
+        """
+        self.alert_callbacks.append(callback)
+
+    # ── Alert creation ──────────────────────────────────────────────────
 
     def trigger_alert(self, flow: FlowData, inference_result: dict[str, Any]) -> Optional[Alert]:
-        """Create and store an alert if the flow is abnormal."""
+        """Create and store an alert if the flow is abnormal.
 
+        Uses the alert_level computed by model_adapter (CRITICAL/WARNING/INFO).
+        Only creates alerts for traffic classified as abnormal (known_malware,
+        unknown_attack, suspicious_tool).
+        """
         if not inference_result.get("is_abnormal", False):
             return None
 
+        # Skip alerting for baseline demo traffic — the model flags unknown
+        # synthetic patterns that don't match its training data as abnormal,
+        # but these are normal background flows in demo mode.
+        if flow.metadata.get("source") == "demo":
+            return None
+
         attack_type = inference_result.get("attack_type", "unknown_attack")
-        alert_level = "CRITICAL" if attack_type == "known_attack" else "WARNING"
+        alert_level = inference_result.get("alert_level", "WARNING")
         alert = Alert(
             alert_id=f"{flow.flow_id}-{int(time.time() * 1000)}",
             flow_id=flow.flow_id,
@@ -66,25 +167,105 @@ class AlertManager:
             extra={
                 "origin": inference_result.get("origin", "unknown"),
                 "is_unknown": inference_result.get("is_unknown", True),
+                "commit_ratio": inference_result.get("commit_ratio"),
+                "bg_distance": inference_result.get("bg_distance"),
+                "recon_error": inference_result.get("recon_error"),
+                "protocol": flow.metadata.get("protocol", {}),
             },
         )
 
         with self.lock:
             self.alert_history.append(alert)
+            if self.db_path:
+                try:
+                    self._insert_alert(alert)
+                except Exception:
+                    pass  # non-critical
 
-        if self.alert_callback:
-            self.alert_callback(alert)
+        for cb in self.alert_callbacks:
+            try:
+                cb(alert)
+            except Exception:
+                pass
 
         return alert
 
-    def get_alert_history(self, start_time: float | None = None, end_time: float | None = None) -> list[Alert]:
-        """Return stored alerts with optional time filtering."""
+    # ── Query ───────────────────────────────────────────────────────────
+
+    def trigger_correlation_alert(self, alert: Any) -> None:
+        """Accept a correlation alert (beaconing/scanning/bidir) for unified query."""
+        # Extract useful fields from the CorrelationAlert evidence
+        evidence = getattr(alert, "evidence", {})
+        alert_type = getattr(alert, "alert_type", "correlation")
+        alert_level = getattr(alert, "alert_level", "WARNING")
+
+        # Derive dst_ip from evidence if available
+        dst_ip = evidence.get("dst_ip", "-")
+        # For scanning alerts, use unique_dst_ips count as a hint
+        if not dst_ip or dst_ip == "-":
+            unique_dsts = evidence.get("unique_dst_ips", 0)
+            if unique_dsts:
+                dst_ip = f"{unique_dsts} IPs"
+            elif alert_type == "bidirectional_asymmetry":
+                ab_dir = evidence.get("abnormal_direction", {})
+                dst_ip = ab_dir.get("dst", "-")
+
+        # Confidence based on severity level
+        level_conf = {"CRITICAL": 0.92, "WARNING": 0.70, "INFO": 0.48}
+        confidence = level_conf.get(alert_level, 0.70)
+
+        # Class name from alert type
+        class_label = {"beaconing": "C2 Beacon", "scanning": "Scan Activity",
+                       "bidirectional_asymmetry": "Bidir Asymmetry"}.get(alert_type, alert_type)
+
+        alert_dict = {
+            "alert_id": f"corr-{getattr(alert, 'alert_id', '?')}-{int(time.time()*1000)}",
+            "flow_id": "correlation",
+            "src_ip": getattr(alert, "src_ip", ""),
+            "dst_ip": dst_ip,
+            "src_port": 0,
+            "dst_port": 0,
+            "alert_level": alert_level,
+            "attack_type": alert_type,
+            "timestamp": getattr(alert, "timestamp", time.time()),
+            "class_name": class_label,
+            "confidence": confidence,
+            "kl_distance": 0.0,
+            "extra": {
+                "description": getattr(alert, "description", ""),
+                "evidence": evidence,
+                "source": "correlation_engine",
+            },
+        }
+        try:
+            a = Alert(**alert_dict)
+            with self.lock:
+                self.alert_history.append(a)
+                if self.db_path and self._db_conn:
+                    self._insert_alert(a)
+            for cb in self.alert_callbacks:
+                try:
+                    cb(a)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def get_alert_history(
+        self, start_time: float | None = None, end_time: float | None = None
+    ) -> list[Alert]:
+        """Return stored alerts with optional time filtering.
+
+        Prefers SQLite if persistence is enabled (survives restart),
+        falls back to in-memory list.
+        """
+        if self.db_path:
+            return self._query_alerts(start_time, end_time)
 
         with self.lock:
             alerts = list(self.alert_history)
-
         if start_time is not None:
-            alerts = [alert for alert in alerts if alert.timestamp >= start_time]
+            alerts = [a for a in alerts if a.timestamp >= start_time]
         if end_time is not None:
-            alerts = [alert for alert in alerts if alert.timestamp <= end_time]
+            alerts = [a for a in alerts if a.timestamp <= end_time]
         return alerts
