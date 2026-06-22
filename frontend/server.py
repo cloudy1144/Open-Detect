@@ -471,7 +471,7 @@ def capture_worker(iface: Optional[str]):
             return
 
         (src_ip, dst_ip, src_port, dst_port, protocol) = key
-        gray_img = build_gray_image(state["packets"])
+        gray_img = build_gray_image(state["packets"], mask_ips=pipeline.enable_ip_masking if pipeline else True)
         flow = FlowData(
             flow_id=build_flow_id(src_ip, src_port, dst_ip, dst_port, state["start_time"]),
             src_ip=src_ip,

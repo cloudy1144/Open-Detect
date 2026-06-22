@@ -19,6 +19,7 @@ pipeline:
   export_dir: ./abnormal_flows
   enable_correlation: true  # multi-flow behavioral analysis (C2 beacon, scan detection)
   enable_health: true     # write health.json every 10s
+  enable_ip_masking: true  # mask IP addresses in packet bytes before image conversion
   db_path: ./alerts.db    # SQLite alert persistence (null = in-memory only)
 
 capture:

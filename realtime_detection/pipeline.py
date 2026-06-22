@@ -39,6 +39,7 @@ class DetectionPipeline:
         baseline_kl_distances: Optional[list[float]] = None,
         enable_correlation: bool = True,
         enable_health: bool = True,
+        enable_ip_masking: bool | None = None,
         class_thresholds: dict[int, float] | None = None,
         recon_threshold: float = 0.15,
         bg_ratio: float = 0.7,
@@ -69,6 +70,10 @@ class DetectionPipeline:
         )
         self.export_dir = export_dir
         self.enable_export = enable_export
+
+        if enable_ip_masking is None:
+            enable_ip_masking = pipe_cfg.get("enable_ip_masking", True)
+        self.enable_ip_masking = bool(enable_ip_masking)
 
         # Dynamic threshold integration
         self.threshold_manager = DynamicThresholdManager(
@@ -120,7 +125,7 @@ class DetectionPipeline:
             return flow
 
         if flow.gray_img is None:
-            flow.gray_img = build_gray_image(flow.packets_data)
+            flow.gray_img = build_gray_image(flow.packets_data, mask_ips=self.enable_ip_masking)
 
         # Extract protocol metadata for alert enrichment
         try:

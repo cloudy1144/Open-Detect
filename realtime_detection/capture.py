@@ -107,7 +107,7 @@ def make_flow_data(
     timestamp: float,
     packets: list[bytes],
 ) -> FlowData:
-    gray_img = build_gray_image(packets)
+    gray_img = build_gray_image(packets, mask_ips=True)
     return FlowData(
         flow_id=build_flow_id(src_ip, src_port, dst_ip, dst_port, timestamp),
         src_ip=src_ip,

@@ -54,6 +54,7 @@ class AsyncDetectionPipeline:
         enable_correlation: bool = True,
         enable_dynamic_threshold: bool = False,
         baseline_kl_distances: Optional[list[float]] = None,
+        enable_ip_masking: bool = True,
     ):
         self.flow_manager = FlowManager(expire_minutes=expire_minutes)
         self.alert_manager = AlertManager()
@@ -71,6 +72,7 @@ class AsyncDetectionPipeline:
         )
         self.export_dir = export_dir
         self.enable_export = enable_export
+        self.enable_ip_masking = enable_ip_masking
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.batch_size = batch_size
         self._lock = asyncio.Lock()
@@ -114,7 +116,7 @@ class AsyncDetectionPipeline:
         try:
             # Preprocess
             if flow.gray_img is None:
-                flow.gray_img = build_gray_image(flow.packets_data)
+                flow.gray_img = build_gray_image(flow.packets_data, mask_ips=self.enable_ip_masking)
 
             # Inference
             try:

@@ -119,6 +119,14 @@ pipeline = DetectionPipeline(db_path="./alerts.db")
 
 **问题**：捕获模块使用微秒级时间戳生成 flow_id，导致同一 TCP 长连接的每批 10 个包都被当作新流重复推理。
 
+### 3.2 IP 地址掩码脱敏
+
+**改进**：在 `realtime_detection.preprocess` 中新增 IP 掩码逻辑，对 packet bytes 中的 IPv4 地址执行头部与文本掩码，避免模型依赖特定主机身份特征。
+
+- 默认由 `pipeline.enable_ip_masking` 启用
+- `build_gray_image(..., mask_ips=True)` 在模型输入灰度图构造前掩码 IP
+- 兼容 `frontend/server.py`、`realtime_detection/capture.py`、`realtime_detection/pipeline_ingest.py`
+
 **修改**：
 
 | 改动 | 文件 |

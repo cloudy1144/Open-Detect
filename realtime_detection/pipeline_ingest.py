@@ -139,7 +139,7 @@ def main():
                 _emit_result(flow, {}, "skip")
                 continue
 
-            flow.gray_img = build_gray_image(flow.packets_data)
+            flow.gray_img = build_gray_image(flow.packets_data, mask_ips=pipeline.enable_ip_masking)
             result = pipeline.process_captured_flow(flow)
             ir = result.inference_result or {}
             processed += 1
