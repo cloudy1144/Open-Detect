@@ -848,3 +848,11 @@ table tbody tr:last-child td {
         display: none;
     }
 }
+
+/* Flow table row colors */
+.flow-table tr.row-critical { background: rgba(239, 68, 68, 0.12) !important; border-left: 3px solid #EF4444; }
+.flow-table tr.row-warning { background: rgba(245, 158, 11, 0.10) !important; border-left: 3px solid #F59E0B; }
+.flow-table tr.row-unknown { background: rgba(139, 92, 246, 0.08) !important; border-left: 3px solid #8B5CF6; }
+.flow-table tr.row-critical td:first-child { color: #EF4444; }
+.flow-table tr.row-warning td:first-child { color: #F59E0B; }
+.flow-table tr.row-unknown td:first-child { color: #8B5CF6; }

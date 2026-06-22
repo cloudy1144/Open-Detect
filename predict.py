@@ -148,7 +148,7 @@ def load_model(model_path, device=None):
 # ============================================================
 # 核心推理
 # ============================================================
-def predict(model, input_data, top_k=5, threshold=2.24, temperature=1.0,
+def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
             class_thresholds: dict[int, float] | None = None,
             recon_threshold: float = 0.15,
             bg_ratio: float = 0.7):

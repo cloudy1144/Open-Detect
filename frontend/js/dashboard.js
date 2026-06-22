@@ -396,14 +396,15 @@ function handleWSMessage(data) {
             updateAttackTypeChart(State.alerts);
             updateAlertLevelChart(State.alerts);
 
-            // Toast 通知
-            const level = alert.alert_level === 'CRITICAL' ? 'critical' : 'warning';
-            showToast({
-                title: `🚨 检测到 ${alert.class_name || '未知攻击'}`,
-                desc: `源 ${alert.src_ip}:${alert.src_port} → 目标 ${alert.dst_ip}:${alert.dst_port}`,
-                level,
-                duration: 6000,
-            });
+            // Toast 通知（仅严重警告弹出）
+            if (alert.alert_level === 'CRITICAL') {
+                showToast({
+                    title: `🚨 检测到 ${alert.class_name || '未知攻击'}`,
+                    desc: `源 ${alert.src_ip}:${alert.src_port} → 目标 ${alert.dst_ip}:${alert.dst_port}`,
+                    level: 'critical',
+                    duration: 6000,
+                });
+            }
 
             // 严重告警弹窗（前 3 条自动弹出）
             if (alert.alert_level === 'CRITICAL' && State.alerts.length <= 3) {

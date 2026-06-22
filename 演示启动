@@ -1,0 +1,10 @@
+启动蜜罐
+\tests> python honeypot.py
+
+
+管理员启动pwsh下运行监测网卡（根目录）
+python frontend/server.py --iface "VMware Network Adapter VMnet8"
+
+
+vmware启动网卡攻击
+\tests> sudo python -m attack_simulator.replay --type unknown_attack --target 192.168.17.1
