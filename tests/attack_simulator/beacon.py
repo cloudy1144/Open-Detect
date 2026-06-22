@@ -15,7 +15,7 @@ except ImportError:
     from attack_simulator import log_attack
 
 
-def run_beacon(target: str = "127.0.0.1", port: int = 8443,
+def run_beacon(target: str = "192.168.17.1", port: int = 8443,
                interval: float = 30.0, count: int = 6,
                payload: bytes = b"\x16\x03\x01\x00\x20" + b"\x00" * 32) -> float:
     """Simulate C2 beaconing with periodic connections at fixed intervals.
@@ -66,7 +66,7 @@ def run_beacon(target: str = "127.0.0.1", port: int = 8443,
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument("--target", default="127.0.0.1")
+    p.add_argument("--target", default="192.168.17.1")
     p.add_argument("--port", type=int, default=8443)
     p.add_argument("--interval", type=float, default=30.0)
     p.add_argument("--count", type=int, default=6)

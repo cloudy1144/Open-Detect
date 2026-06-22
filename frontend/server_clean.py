@@ -503,13 +503,13 @@ def capture_worker(iface: Optional[str]):
             coro = broadcast_flow(result)
             asyncio.run_coroutine_threadsafe(coro, loop)
 
-            # 广播告警
-            if result.is_abnormal and result.metadata.get("alert_id"):
-                alert = pipeline.alert_manager.get_alert_history()[-1]
-                if alert:
-                    perf_metrics["total_alerts"] += 1
-                    coro2 = broadcast_alert(alert)
-                    asyncio.run_coroutine_threadsafe(coro2, loop)
+           # 广播告警
+           if result.is_abnormal and result.metadata.get("alert_id"):
+               alert = pipeline.alert_manager.get_alert_history()[-1]
+               if alert:
+                   perf_metrics["total_alerts"] += 1
+                   coro2 = broadcast_alert(alert)
+                   asyncio.run_coroutine_threadsafe(coro2, loop)
 
         except Exception as e:
             print(f"[ERROR] 推理失败 {flow.flow_id}: {e}")

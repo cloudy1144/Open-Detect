@@ -27,7 +27,7 @@ def _checksum(data: bytes) -> int:
     return ~s & 0xffff
 
 
-def run_syn_flood(target: str = "127.0.0.1", port: int = 8080,
+def run_syn_flood(target: str = "192.168.17.1", port: int = 8080,
                   duration: float = 5.0, rate: int = 100) -> float:
     """Send SYN packets at high rate to simulate DDoS.
 
@@ -125,7 +125,7 @@ def run_syn_flood(target: str = "127.0.0.1", port: int = 8080,
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument("--target", default="127.0.0.1")
+    p.add_argument("--target", default="192.168.17.1")
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--duration", type=float, default=5.0)
     args = p.parse_args()

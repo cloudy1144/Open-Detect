@@ -225,24 +225,10 @@ def predict(model, input_data, top_k=5, threshold=2.24, temperature=1.0,
         # At threshold, confidence ~0.95; at 4× threshold, confidence ~0.40.
         excess = max(0.0, min_euclidean - effective_threshold)
         unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
-
-<<<<<<< HEAD
-    # 未知攻击检测
-    if min_dist > threshold:
-        # 置信度 = 基于超出阈值的程度，映射到 [0.5, 0.99]
-        # 距离越远置信度越高，但不写死 1.0
-        excess = (min_dist - threshold) / threshold  # 超出比例
-        unknown_conf = min(0.99, 0.5 + excess * 0.1)
-        return [{
-            "class": UNKNOWN_NAME,
-            "label": UNKNOWN_LABEL,
-            "confidence": round(unknown_conf, 6),
-=======
         return [{
             "class": UNKNOWN_NAME,
             "label": UNKNOWN_LABEL,
             "confidence": unknown_conf,
->>>>>>> test_function
             "origin": "unknown",
             "is_unknown": True,
             "distance": round(min_euclidean, 4),
