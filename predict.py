@@ -150,8 +150,8 @@ def load_model(model_path, device=None):
 # ============================================================
 def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
             class_thresholds: dict[int, float] | None = None,
-            recon_threshold: float = 0.15,
-            bg_ratio: float = 0.7):
+            recon_threshold: float = 0.0,
+            bg_ratio: float = 0.0):
     """
     对输入样本进行推理.
 
@@ -163,11 +163,9 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
                    与旧版「平方距离 5.0」等价）
         temperature: softmax 温度参数
         class_thresholds: 每类专属阈值，如 {31: 2.5, 15: 1.8}。
-        recon_threshold: 重构 MSE 阈值（默认 0.15），0=关闭。
-        bg_ratio: 背景原型比率阈值（默认 0.7），0=关闭。
-                  样本到最近原型距离 vs 到所有原型质心距离的比值。
-                  > bg_ratio → 样本不够"专一"，判为 unknown。
-                  解决模型只在闭集上训练、缺乏拒绝能力的根本问题。
+        recon_threshold: (已弃用) 重构 MSE 阈值，默认为 0 即关闭。
+        bg_ratio: (已弃用) 背景原型比率阈值，默认为 0 即关闭。
+                  未知攻击检测仅使用距离阈值判断。
 
     Returns:
         list[dict]: 每个结果含 class, label, confidence, origin,
@@ -205,22 +203,12 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
     else:
         effective_threshold = threshold
 
-    # 未知攻击检测（三重信号：绝对距离远 OR 重构差 OR 不够专一）
-    is_unknown = (
-        min_euclidean > effective_threshold
-        or recon_suspicious
-        or (bg_ratio > 0 and commit_ratio > bg_ratio)
-    )
+    # 未知攻击检测（仅使用距离阈值）
+    is_unknown = min_euclidean > effective_threshold
 
     if is_unknown:
-        # 记录触发原因用于调试
-        reasons = []
-        if min_euclidean > effective_threshold:
-            reasons.append(f"distance({min_euclidean:.3f} > {effective_threshold})")
-        if recon_suspicious:
-            reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
-        if bg_ratio > 0 and commit_ratio > bg_ratio:
-            reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+        # 记录触发原因
+        reasons = [f"distance({min_euclidean:.3f} > {effective_threshold})"]
         # Confidence for unknown: inversely proportional to how far beyond threshold.
         # At threshold, confidence ~0.95; at 4× threshold, confidence ~0.40.
         excess = max(0.0, min_euclidean - effective_threshold)
@@ -268,8 +256,8 @@ def predict(model, input_data, top_k=5, threshold=5.0, temperature=1.0,
 def predict_batch(model, images: list, top_k: int = 1, threshold: float = 2.24,
                   temperature: float = 1.0,
                   class_thresholds: dict[int, float] | None = None,
-                  recon_threshold: float = 0.15,
-                  bg_ratio: float = 0.7) -> list[list[dict]]:
+                  recon_threshold: float = 0.0,
+                  bg_ratio: float = 0.0) -> list[list[dict]]:
     """Batch inference for multiple images in a single forward pass.
 
     Args:
@@ -318,20 +306,11 @@ def predict_batch(model, images: list, top_k: int = 1, threshold: float = 2.24,
         else:
             effective_threshold = threshold
 
-        is_unknown = (
-            min_euclidean > effective_threshold
-            or recon_suspicious
-            or (bg_ratio > 0 and commit_ratio > bg_ratio)
-        )
+        # 未知攻击检测（仅使用距离阈值）
+        is_unknown = min_euclidean > effective_threshold
 
         if is_unknown:
-            reasons = []
-            if min_euclidean > effective_threshold:
-                reasons.append(f"distance({min_euclidean:.3f} > {effective_threshold})")
-            if recon_suspicious:
-                reasons.append(f"recon({recon_error:.5f} > {recon_threshold})")
-            if bg_ratio > 0 and commit_ratio > bg_ratio:
-                reasons.append(f"bg_ratio({commit_ratio:.3f} > {bg_ratio})")
+            reasons = [f"distance({min_euclidean:.3f} > {effective_threshold})"]
             excess = max(0.0, min_euclidean - effective_threshold)
             unknown_conf = round(max(0.35, 0.95 - excess * 0.15), 4)
             all_results.append([{

@@ -8,8 +8,8 @@ model:
   threshold: 2.24         # euclidean distance threshold for unknown detection
   top_k: 1                # number of top match results to return
   temperature: 1.0        # softmax temperature for confidence
-  recon_threshold: 0.15   # reconstruction error threshold (MSE)
-  bg_ratio: 0.7           # commit_ratio threshold (> this → unknown)
+  recon_threshold: 0.0    # reconstruction error threshold (MSE), 0=disabled
+  bg_ratio: 0.0           # commit_ratio threshold, 0=disabled
   class_thresholds: {}    # per-class overrides, e.g. {31: 2.5, 15: 1.8}
 
 pipeline:

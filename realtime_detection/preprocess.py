@@ -21,6 +21,73 @@ def build_gray_image(packets_data: Iterable[bytes], image_size: int = 32, max_by
     return np.frombuffer(payload, dtype=np.uint8).reshape(image_size, image_size)
 
 
+def build_gray_image_training_compat(
+    packets_data: Iterable[bytes],
+    max_packets: int = 8,
+    image_size: int = 32,
+    header_hex_len: int = 160,
+    payload_hex_len: int = 96,
+) -> np.ndarray:
+    """与训练预处理完全一致的 32x32 灰度图构建。
+
+    训练管线 (data/Preprocessing/utils.py):
+      PCAP → raw_packet_to_string()
+        → ip.src = ip.dst = "0.0.0.0"
+        → bytes(ip), hexlify, 去除 payload hex, 仅保留 IP+TCP 头
+        → header[:160] hex chars (80B) + payload[:96] hex chars (48B)
+        → 8 packets × 256 hex chars = 2048 hex → 1024 uint8 → 32×32
+
+    本函数模拟此管线：剥离 Ethernet 头、零化 IP、分离 header/payload、hex 补齐。
+    """
+    result_hex = ""
+    chunk_hex_len = header_hex_len + payload_hex_len
+
+    pkts = list(packets_data)
+    for pkt_idx in range(max_packets):
+        if pkt_idx < len(pkts):
+            raw = bytes(pkts[pkt_idx])
+
+            # 1. 剥离 Ethernet 头 (14 bytes)
+            if len(raw) > 14:
+                raw = raw[14:]
+
+            # 2. 零化 IP 地址 (bytes 12-19 of IP header)
+            raw = bytearray(raw)
+            if len(raw) >= 20:
+                raw[12:20] = b"\x00" * 8
+            raw = bytes(raw)
+
+            # 3. 解析 header 长度
+            ip_ihl = raw[0] & 0x0F if len(raw) > 0 else 5
+            ip_hdr_len = ip_ihl * 4
+            if len(raw) > ip_hdr_len + 12:
+                tcp_data_off = (raw[ip_hdr_len + 12] >> 4) & 0x0F
+            else:
+                tcp_data_off = 5
+            tcp_hdr_len = tcp_data_off * 4
+            total_hdr_len = ip_hdr_len + tcp_hdr_len
+
+            # 4. 分离 IP+TCP header 和 TCP payload
+            hdr_bytes = raw[:total_hdr_len]
+            pld_bytes = raw[total_hdr_len:]
+
+            hdr_hex = hdr_bytes.hex()
+            pld_hex = pld_bytes.hex()
+
+            # 5. 截断/补齐 (与训练完全一致)
+            hdr_hex = hdr_hex[:header_hex_len].ljust(header_hex_len, "0")
+            pld_hex = pld_hex[:payload_hex_len].ljust(payload_hex_len, "0")
+
+            result_hex += hdr_hex + pld_hex
+        else:
+            result_hex += "0" * chunk_hex_len
+
+    # 6. hex 字符串 → uint8 数组
+    result_bytes = bytes.fromhex(result_hex)
+    result_bytes = result_bytes[: image_size * image_size].ljust(image_size * image_size, b"\x00")
+    return np.frombuffer(result_bytes, dtype=np.uint8).reshape(image_size, image_size)
+
+
 def build_flow_id(src_ip: str, src_port: int, dst_ip: str, dst_port: int, timestamp: float) -> str:
     """Construct a stable flow id based on 5-tuple (no timestamp in id).
 

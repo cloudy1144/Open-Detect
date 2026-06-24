@@ -116,8 +116,8 @@ function showAlertModal(alert) {
     document.getElementById('modalLevel').style.color =
         (alert.alert_level || '').toUpperCase() === 'CRITICAL' ? '#EF4444' :
         (alert.alert_level || '').toUpperCase() === 'WARNING' ? '#F59E0B' : '#64748B';
-    document.getElementById('modalSrcIP').textContent = `${alert.src_ip}:${alert.src_port}`;
-    document.getElementById('modalDstIP').textContent = `${alert.dst_ip}:${alert.dst_port}`;
+    document.getElementById('modalSrcIP').textContent = alert.src_port ? `${alert.src_ip}:${alert.src_port}` : alert.src_ip;
+    document.getElementById('modalDstIP').textContent = alert.dst_port ? `${alert.dst_ip}:${alert.dst_port}` : alert.dst_ip;
     document.getElementById('modalConfidence').textContent = fmtPercent(alert.confidence);
     document.getElementById('modalDistance').textContent = (alert.kl_distance || 0).toFixed(4);
     document.getElementById('modalTime').textContent = formatFullTime(alert.timestamp);
@@ -362,6 +362,9 @@ function handleWSMessage(data) {
             updateProtocolChart(State.flows.slice(-200));
             // 趋势由定时器驱动，不在 flow 里更新
 
+            // 更新正常流量列表（攻击模拟页）
+            updateNormalFlowTable();
+
             break;
         }
 
@@ -398,9 +401,11 @@ function handleWSMessage(data) {
 
             // Toast 通知（仅严重警告弹出）
             if (alert.alert_level === 'CRITICAL') {
+                const srcStr = alert.src_port ? `${alert.src_ip}:${alert.src_port}` : alert.src_ip;
+                const dstStr = alert.dst_port ? `${alert.dst_ip}:${alert.dst_port}` : alert.dst_ip;
                 showToast({
                     title: `🚨 检测到 ${alert.class_name || '未知攻击'}`,
-                    desc: `源 ${alert.src_ip}:${alert.src_port} → 目标 ${alert.dst_ip}:${alert.dst_port}`,
+                    desc: `源 ${srcStr} → 目标 ${dstStr}`,
                     level: 'critical',
                     duration: 6000,
                 });
@@ -577,14 +582,47 @@ document.getElementById('pauseBtn').addEventListener('click', () => {
 // ============================================================
 // 清空告警
 // ============================================================
-document.getElementById('clearAlertsBtn').addEventListener('click', () => {
+document.getElementById('clearAlertsBtn').addEventListener('click', async () => {
+    // 先清除前端状态
     State.alerts = [];
     updateAlertTable();
-    updateStats();
     updateAttackTypeChart(State.alerts);
     updateAlertLevelChart(State.alerts);
     document.getElementById('alertBadge').style.display = 'none';
-    showToast({ title: '告警已清空', desc: '所有告警记录已被清除', level: 'info', duration: 3000 });
+
+    // 调用后端清除所有缓存
+    try {
+        const res = await fetch('/api/admin/clear', { method: 'POST' });
+        const data = await res.json();
+        showToast({ title: '缓存已清除', desc: data.message || '告警历史、计数器已重置', level: 'info', duration: 3000 });
+        // 刷新总览统计
+        if (typeof fetchSummary === 'function') fetchSummary();
+    } catch {
+        showToast({ title: '缓存已清除', desc: '(后端请求失败，仅清除前端显示)', level: 'info', duration: 3000 });
+    }
+});
+
+// 顶部清除缓存按钮（常驻导航栏）
+document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+    // 先清除前端状态
+    State.alerts = [];
+    State.flows = [];
+    updateAlertTable();
+    updateFlowTable();
+    updateNormalFlowTable();
+    updateAttackTypeChart(State.alerts);
+    updateAlertLevelChart(State.alerts);
+    document.getElementById('alertBadge').style.display = 'none';
+
+    // 调用后端清除所有缓存
+    try {
+        const res = await fetch('/api/admin/clear', { method: 'POST' });
+        const data = await res.json();
+        showToast({ title: '缓存已清除', desc: data.message || '全部数据已重置', level: 'info', duration: 3000 });
+        if (typeof fetchSummary === 'function') fetchSummary();
+    } catch {
+        showToast({ title: '缓存已清除', desc: '(后端请求失败，仅清除前端显示)', level: 'info', duration: 3000 });
+    }
 });
 
 // ============================================================
@@ -644,6 +682,288 @@ function init() {
     console.log('[OpenDetect] 可视化界面已初始化（WebSocket 模式）');
     console.log('[OpenDetect] 等待后端检测引擎数据推送...');
     console.log('[OpenDetect] 启动方式: cd 项目根目录 && python frontend/server.py');
+}
+
+// ============================================================
+// 攻击模拟面板逻辑
+// ============================================================
+const AttackState = {
+    running: false,
+    name: '',
+    startedAt: 0,
+    count: 0,
+    log: [],
+    pollTimer: null,
+};
+
+const ATTACK_ENDPOINTS = {
+    scan:      { url: '/api/attack/scan',         name: '端口扫描' },
+    ddos:      { url: '/api/attack/ddos',         name: 'SYN Flood' },
+    beacon:    { url: '/api/attack/beacon',        name: 'C2 Beacon' },
+    replay:    { url: '/api/attack/replay',        name: 'PCAP 回放' },
+    orchestrate: { url: '/api/attack/orchestrate', name: '全套编排' },
+    trigger_rule: { url: '/api/test/trigger',      name: '规则检测套件' },
+};
+
+function getAttackTarget() {
+    return document.getElementById('attackTargetInput').value.trim() || '172.17.0.1';
+}
+
+async function triggerAttack(attackType) {
+    const ep = ATTACK_ENDPOINTS[attackType];
+    if (!ep) return;
+
+    const target = getAttackTarget();
+    document.getElementById('attackTarget').textContent = target;
+
+    const body = { target: target };
+    if (attackType === 'replay') {
+        body.type = document.getElementById('pcapType').value;
+    }
+    if (attackType === 'trigger_rule') {
+        body.source = 'rule';
+    }
+
+    try {
+        const resp = await fetch(ep.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            AttackState.running = true;
+            AttackState.name = ep.name;
+            AttackState.startedAt = Date.now();
+            AttackState.count++;
+
+            showToast({
+                title: `已启动: ${ep.name}`,
+                desc: data.message || `目标: ${target}`,
+                level: 'info',
+                duration: 3000,
+            });
+
+            // 记录日志
+            AttackState.log.unshift({
+                time: new Date().toLocaleTimeString('zh-CN'),
+                type: ep.name,
+                target: target,
+                status: 'running',
+                elapsed: 0,
+            });
+            updateAttackLog();
+            updateAttackUI();
+            startAttackPolling();
+        } else {
+            showToast({
+                title: `启动失败: ${ep.name}`,
+                desc: data.message || '未知错误',
+                level: 'warning',
+                duration: 4000,
+            });
+        }
+    } catch (err) {
+        showToast({
+            title: '请求失败',
+            desc: err.message || '网络错误',
+            level: 'warning',
+            duration: 4000,
+        });
+    }
+}
+
+async function stopAttack() {
+    try {
+        const resp = await fetch('/api/attack/stop', { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            AttackState.running = false;
+            stopAttackPolling();
+            updateAttackUI();
+
+            // 更新最后一条日志
+            if (AttackState.log.length > 0) {
+                AttackState.log[0].status = 'stopped';
+                AttackState.log[0].elapsed = ((Date.now() - AttackState.startedAt) / 1000).toFixed(1);
+            }
+            updateAttackLog();
+
+            showToast({
+                title: '攻击已停止',
+                desc: data.message || '',
+                level: 'info',
+                duration: 3000,
+            });
+        }
+    } catch (err) {
+        console.error('停止攻击失败:', err);
+    }
+}
+
+function startAttackPolling() {
+    stopAttackPolling();
+    AttackState.pollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/attack/status');
+            const data = await resp.json();
+
+            const wasRunning = AttackState.running;
+            AttackState.running = data.running || false;
+            AttackState.name = data.name || AttackState.name;
+
+            if (!AttackState.running && wasRunning) {
+                // 攻击刚结束
+                if (AttackState.log.length > 0 && AttackState.log[0].status === 'running') {
+                    AttackState.log[0].status = 'completed';
+                    AttackState.log[0].elapsed = ((Date.now() - AttackState.startedAt) / 1000).toFixed(1);
+                }
+                stopAttackPolling();
+                showToast({
+                    title: '攻击完成',
+                    desc: `${AttackState.name} 执行完毕`,
+                    level: 'info',
+                    duration: 3000,
+                });
+            }
+
+            if (AttackState.running && AttackState.startedAt) {
+                const elapsed = ((Date.now() - AttackState.startedAt) / 1000).toFixed(1);
+                document.getElementById('attackElapsed').textContent = `已运行 ${elapsed}s`;
+                if (AttackState.log.length > 0) {
+                    AttackState.log[0].elapsed = elapsed;
+                }
+            }
+
+            updateAttackUI();
+            updateAttackLog();
+        } catch (err) {
+            // 静默处理轮询错误
+        }
+    }, 1000);
+}
+
+function stopAttackPolling() {
+    if (AttackState.pollTimer) {
+        clearInterval(AttackState.pollTimer);
+        AttackState.pollTimer = null;
+    }
+}
+
+function updateAttackUI() {
+    const statusEl = document.getElementById('attackStatus');
+    const detailEl = document.getElementById('attackStatusDetail');
+    const nameEl = document.getElementById('attackName');
+    const countEl = document.getElementById('attackCount');
+
+    if (AttackState.running) {
+        statusEl.textContent = '运行中';
+        statusEl.style.color = '#F59E0B';
+        detailEl.textContent = '攻击执行中...';
+        nameEl.textContent = AttackState.name;
+    } else {
+        statusEl.textContent = '空闲';
+        statusEl.style.color = '#10B981';
+        detailEl.textContent = '等待触发';
+        nameEl.textContent = '--';
+        document.getElementById('attackElapsed').textContent = '--';
+    }
+
+    countEl.textContent = AttackState.count;
+
+    // 更新按钮状态
+    document.querySelectorAll('.attack-btn').forEach(btn => {
+        btn.classList.toggle('running', AttackState.running);
+        btn.disabled = AttackState.running;
+    });
+}
+
+function updateAttackLog() {
+    const tbody = document.getElementById('attackLogBody');
+    if (AttackState.log.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">暂无攻击记录</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = AttackState.log.slice(0, 50).map(entry => {
+        const statusTag = entry.status === 'running'
+            ? '<span class="tag tag-warning">运行中</span>'
+            : entry.status === 'completed'
+                ? '<span class="tag tag-normal">完成</span>'
+                : '<span class="tag tag-abnormal">已停止</span>';
+        return `<tr>
+            <td>${entry.time}</td>
+            <td>${entry.type}</td>
+            <td>${entry.target}</td>
+            <td>${statusTag}</td>
+            <td>${entry.elapsed ? entry.elapsed + 's' : '--'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function updatePcapLabel() {
+    const sel = document.getElementById('pcapType');
+    const label = document.getElementById('pcapReplayLabel');
+    const map = {
+        known_malware: '已知恶意软件',
+        unknown_attack: '未知攻击',
+        normal: '正常流量',
+        tls13: 'TLS 1.3',
+    };
+    label.textContent = '类型: ' + (map[sel.value] || sel.value);
+}
+
+// ── 事件绑定 ──
+document.querySelectorAll('.attack-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (AttackState.running) return;
+        const attackType = btn.dataset.attack;
+        if (attackType) triggerAttack(attackType);
+    });
+});
+
+document.getElementById('attackStopBtn').addEventListener('click', stopAttack);
+document.getElementById('clearAttackLogBtn').addEventListener('click', () => {
+    AttackState.log = [];
+    updateAttackLog();
+});
+document.getElementById('pcapType').addEventListener('change', updatePcapLabel);
+document.getElementById('attackTargetInput').addEventListener('change', function() {
+    document.getElementById('attackTarget').textContent = this.value.trim() || '172.17.0.1';
+});
+
+// 初始更新
+updatePcapLabel();
+updateAttackUI();
+
+// ============================================================
+// 正常流量列表（攻击模拟页）
+// ============================================================
+function updateNormalFlowTable() {
+    const tbody = document.getElementById('normalFlowBody');
+    if (!tbody) return;
+    const normalFlows = State.flows.filter(f => !f.is_abnormal);
+
+    const countEl = document.getElementById('normalFlowCount');
+    if (countEl) countEl.textContent = normalFlows.length;
+
+    if (normalFlows.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无正常流量数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = normalFlows.slice().reverse().slice(0, 100).map(f => `
+        <tr>
+            <td>${formatTime(f.timestamp)}</td>
+            <td>${f.src_ip}</td>
+            <td>${f.dst_ip}</td>
+            <td>${f.protocol || '--'}</td>
+            <td>${f.class_name || '--'}</td>
+            <td>${(f.confidence * 100).toFixed(1)}%</td>
+            <td><span class="tag tag-normal">正常</span></td>
+        </tr>
+    `).join('');
 }
 
 document.addEventListener('DOMContentLoaded', init);

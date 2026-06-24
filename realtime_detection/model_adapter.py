@@ -100,8 +100,8 @@ class InferenceConfig:
     temperature: float = 1.0
     device: Optional[str] = None
     class_thresholds: dict[int, float] | None = None  # 类特定阈值, 如 {31: 2.5}
-    recon_threshold: float = 0.15            # 重构MSE阈值, 0=关闭此检查
-    bg_ratio: float = 0.7                    # 背景原型比率, 0=关闭
+    recon_threshold: float = 0.0             # 重构MSE阈值, 0=关闭此检查
+    bg_ratio: float = 0.0                    # 背景原型比率, 0=关闭
 
 
 class OpenDetectInferenceAdapter:
