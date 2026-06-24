@@ -19,7 +19,7 @@ except ImportError:
 PCAP_DIR = Path(__file__).resolve().parent.parent / "pcaps"
 
 
-def run_replay(pcap_type: str, target: str = "127.0.0.1", iface: str = "lo") -> float:
+def run_replay(pcap_type: str, target: str = "192.168.17.1", iface: str = "eth0") -> float:
     """Replay a PCAP file matching the given type.
 
     Args:
@@ -222,7 +222,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--type", choices=["known_malware", "unknown_attack", "normal", "tls13", "generate"],
                    default="normal")
-    p.add_argument("--target", default="127.0.0.1")
+    p.add_argument("--target", default="192.168.17.1")
     args = p.parse_args()
 
     if args.type == "generate":

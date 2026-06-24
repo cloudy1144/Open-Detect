@@ -23,7 +23,7 @@ except ImportError:
     from attack_simulator import LOG_FILE
 
 
-def run_all(target: str = "127.0.0.1", wait_between: float = 15.0) -> dict:
+def run_all(target: str = "192.168.17.1", wait_between: float = 15.0, step_callback=None) -> dict:
     """Execute all attack types in sequence, logging each to attack_log.jsonl.
 
     Args:
@@ -91,7 +91,7 @@ def run_all(target: str = "127.0.0.1", wait_between: float = 15.0) -> dict:
     return results
 
 
-def run_all_with_stop(target: str = "127.0.0.1", wait_between: float = 15.0,
+def run_all_with_stop(target: str = "192.168.17.1", wait_between: float = 15.0,
                       stop_event: threading.Event | None = None,
                       step_callback=None) -> dict:
     """Same as run_all but checks stop_event between attacks to allow early termination."""
@@ -182,7 +182,7 @@ def run_all_with_stop(target: str = "127.0.0.1", wait_between: float = 15.0,
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument("--target", default="127.0.0.1")
+    p.add_argument("--target", default="192.168.17.1")
     p.add_argument("--wait", type=float, default=15.0)
     args = p.parse_args()
     run_all(args.target, args.wait)

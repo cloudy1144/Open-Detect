@@ -1,0 +1,354 @@
+[
+  {
+    "class_id": 0,
+    "class_name": "Vawtrak.C",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "00_Vawtrak.C_000.pcap"
+  },
+  {
+    "class_id": 1,
+    "class_name": "Upatre",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "01_Upatre_000.pcap"
+  },
+  {
+    "class_id": 2,
+    "class_name": "TrickBotCC",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "02_TrickBotCC_000.pcap"
+  },
+  {
+    "class_id": 3,
+    "class_name": "Totbrick",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "03_Totbrick_000.pcap"
+  },
+  {
+    "class_id": 4,
+    "class_name": "Tor",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "04_Tor_000.pcap"
+  },
+  {
+    "class_id": 5,
+    "class_name": "Tiggre",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "05_Tiggre_000.pcap"
+  },
+  {
+    "class_id": 6,
+    "class_name": "Shifu.A",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "06_Shifu.A_000.pcap"
+  },
+  {
+    "class_id": 7,
+    "class_name": "Qakbot",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "07_Qakbot_000.pcap"
+  },
+  {
+    "class_id": 8,
+    "class_name": "PandaZeuSCC",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "08_PandaZeuSCC_000.pcap"
+  },
+  {
+    "class_id": 9,
+    "class_name": "Panda.BZA!tr",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "09_Panda.BZA!tr_000.pcap"
+  },
+  {
+    "class_id": 10,
+    "class_name": "nessus",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "10_nessus_000.pcap"
+  },
+  {
+    "class_id": 11,
+    "class_name": "golistmero",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "11_golistmero_000.pcap"
+  },
+  {
+    "class_id": 12,
+    "class_name": "Dynamer!ac",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "12_Dynamer!ac_000.pcap"
+  },
+  {
+    "class_id": 13,
+    "class_name": "Drixed",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "13_Drixed_000.pcap"
+  },
+  {
+    "class_id": 14,
+    "class_name": "DridexCC",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "14_DridexCC_000.pcap"
+  },
+  {
+    "class_id": 15,
+    "class_name": "CobaltStrike",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "15_CobaltStrike_000.pcap"
+  },
+  {
+    "class_id": 16,
+    "class_name": "Caphaw.A",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "16_Caphaw.A_000.pcap"
+  },
+  {
+    "class_id": 17,
+    "class_name": "Caphaw.AH",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "17_Caphaw.AH_000.pcap"
+  },
+  {
+    "class_id": 18,
+    "class_name": "burpsuite",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "18_burpsuite_000.pcap"
+  },
+  {
+    "class_id": 19,
+    "class_name": "BuerLoader",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "19_BuerLoader_000.pcap"
+  },
+  {
+    "class_id": 20,
+    "class_name": "Banker",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "20_Banker_000.pcap"
+  },
+  {
+    "class_id": 21,
+    "class_name": "awvs-v12",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "21_awvs-v12_000.pcap"
+  },
+  {
+    "class_id": 22,
+    "class_name": "awvs-v11",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "22_awvs-v11_000.pcap"
+  },
+  {
+    "class_id": 23,
+    "class_name": "arachni",
+    "attack_type": "suspicious_tool",
+    "alert_level": "WARNING",
+    "packets": 8,
+    "file": "23_arachni_000.pcap"
+  },
+  {
+    "class_id": 24,
+    "class_name": "Gmail",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "24_Gmail_000.pcap"
+  },
+  {
+    "class_id": 25,
+    "class_name": "FTP",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "25_FTP_000.pcap"
+  },
+  {
+    "class_id": 26,
+    "class_name": "Nsis-ay",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 8,
+    "file": "26_Nsis-ay_000.pcap"
+  },
+  {
+    "class_id": 27,
+    "class_name": "Facetime",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "27_Facetime_000.pcap"
+  },
+  {
+    "class_id": 28,
+    "class_name": "Weibo",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 8,
+    "file": "28_Weibo_000.pcap"
+  },
+  {
+    "class_id": 29,
+    "class_name": "Cridex",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "29_Cridex_000.pcap"
+  },
+  {
+    "class_id": 30,
+    "class_name": "Zeus",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 3,
+    "file": "30_Zeus_000.pcap"
+  },
+  {
+    "class_id": 31,
+    "class_name": "SMB",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 2,
+    "file": "31_SMB_000.pcap"
+  },
+  {
+    "class_id": 32,
+    "class_name": "BitTorrent",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "32_BitTorrent_000.pcap"
+  },
+  {
+    "class_id": 33,
+    "class_name": "WorldOfWarcraft",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 8,
+    "file": "33_WorldOfWarcraft_000.pcap"
+  },
+  {
+    "class_id": 34,
+    "class_name": "Shifu",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 1,
+    "file": "34_Shifu_000.pcap"
+  },
+  {
+    "class_id": 35,
+    "class_name": "Outlook",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "35_Outlook_000.pcap"
+  },
+  {
+    "class_id": 36,
+    "class_name": "Virut",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "36_Virut_000.pcap"
+  },
+  {
+    "class_id": 37,
+    "class_name": "Geodo",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 6,
+    "file": "37_Geodo_000.pcap"
+  },
+  {
+    "class_id": 38,
+    "class_name": "MySQL",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "38_MySQL_000.pcap"
+  },
+  {
+    "class_id": 39,
+    "class_name": "Htbot",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 7,
+    "file": "39_Htbot_000.pcap"
+  },
+  {
+    "class_id": 40,
+    "class_name": "Tinba",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 1,
+    "file": "40_Tinba_000.pcap"
+  },
+  {
+    "class_id": 41,
+    "class_name": "Skype",
+    "attack_type": "normal",
+    "alert_level": "INFO",
+    "packets": 1,
+    "file": "41_Skype_000.pcap"
+  },
+  {
+    "class_id": 42,
+    "class_name": "Miuref",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 3,
+    "file": "42_Miuref_000.pcap"
+  },
+  {
+    "class_id": 43,
+    "class_name": "Neris",
+    "attack_type": "known_malware",
+    "alert_level": "CRITICAL",
+    "packets": 8,
+    "file": "43_Neris_000.pcap"
+  }
+]

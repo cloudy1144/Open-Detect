@@ -122,7 +122,34 @@ class AlertManager:
             for r in rows
         ]
 
-    # ── Callback registration ───────────────────────────────────────────
+    def clear(self, before_time: float | None = None):
+        """Clear in-memory alert history and optionally purge SQLite records.
+
+        Args:
+            before_time: If provided, only clear records before this timestamp.
+                         If None, clear all alert history.
+        """
+        # 清除内存记录
+        with self.lock:
+            if before_time is not None:
+                self.alert_history = [a for a in self.alert_history if a.timestamp >= before_time]
+            else:
+                self.alert_history.clear()
+
+        # 清除 SQLite 记录
+        try:
+            if self.db_path:
+                conn = sqlite3.connect(self.db_path)
+                if before_time is not None:
+                    conn.execute("DELETE FROM alerts WHERE timestamp < ?", (before_time,))
+                else:
+                    conn.execute("DELETE FROM alerts")
+                conn.commit()
+                conn.close()
+        except Exception:
+            pass
+
+    # ---- callback helpers ----
 
     def register_alert_callback(self, callback: Callable[[Alert], None]) -> None:
         """Register a downstream consumer (visualization, SIEM, logging etc.).
@@ -171,6 +198,18 @@ class AlertManager:
                 "bg_distance": inference_result.get("bg_distance"),
                 "recon_error": inference_result.get("recon_error"),
                 "protocol": flow.metadata.get("protocol", {}),
+                # Dashboard comparison table fields
+                "model_result": {
+                    "attack_type": attack_type,
+                    "alert_level": alert_level,
+                    "class_name": inference_result.get("class_name"),
+                    "confidence": float(inference_result.get("confidence", 0.0)),
+                    "is_unknown": inference_result.get("is_unknown", True),
+                },
+                "rule_result": {
+                    "attack_type": None,
+                    "alert_level": "INFO",
+                },
             },
         )
 
@@ -235,6 +274,18 @@ class AlertManager:
                 "description": getattr(alert, "description", ""),
                 "evidence": evidence,
                 "source": "correlation_engine",
+                # Dashboard comparison table fields
+                "model_result": {
+                    "attack_type": None,
+                    "alert_level": "INFO",
+                    "class_name": None,
+                    "confidence": 0.0,
+                    "is_unknown": False,
+                },
+                "rule_result": {
+                    "attack_type": alert_type,
+                    "alert_level": alert_level,
+                },
             },
         }
         try:

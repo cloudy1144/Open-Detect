@@ -15,7 +15,7 @@ except ImportError:
     from attack_simulator import log_attack
 
 
-def run_port_scan(target: str = "127.0.0.1", start_port: int = 20,
+def run_port_scan(target: str = "192.168.17.1", start_port: int = 20,
                   end_port: int = 50, delay: float = 0.05) -> float:
     """SYN-like scan by attempting TCP connections to many ports in rapid succession.
 
@@ -51,7 +51,7 @@ def run_port_scan(target: str = "127.0.0.1", start_port: int = 20,
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument("--target", default="127.0.0.1")
+    p.add_argument("--target", default="192.168.17.1")
     p.add_argument("--start-port", type=int, default=20)
     p.add_argument("--end-port", type=int, default=50)
     args = p.parse_args()

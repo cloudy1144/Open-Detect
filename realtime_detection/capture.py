@@ -27,7 +27,7 @@ from scapy.all import IP, TCP, UDP, sniff, AsyncSniffer
 
 from realtime_detection.flow_manager import FlowData
 from realtime_detection.pipeline import DetectionPipeline
-from realtime_detection.preprocess import build_flow_id, build_gray_image
+from realtime_detection.preprocess import build_flow_id, build_gray_image, build_gray_image_training_compat
 
 
 DEFAULT_MAX_PACKETS = 10
@@ -106,8 +106,19 @@ def make_flow_data(
     protocol: str,
     timestamp: float,
     packets: list[bytes],
+    training_compat: bool = False,
 ) -> FlowData:
-    gray_img = build_gray_image(packets)
+    """Assemble a FlowData record from captured packets.
+
+    Args:
+        training_compat: If True, use training-aligned preprocessing
+            (strip Ethernet, zero IPs, 80B header + 48B payload per packet,
+             exactly 8 packets). Defaults to False for backward compatibility.
+    """
+    if training_compat:
+        gray_img = build_gray_image_training_compat(packets, max_packets=8)
+    else:
+        gray_img = build_gray_image(packets)
     return FlowData(
         flow_id=build_flow_id(src_ip, src_port, dst_ip, dst_port, timestamp),
         src_ip=src_ip,
@@ -129,6 +140,7 @@ def process_and_maybe_flush(
     max_packets: int,
     no_pipeline: bool,
     debug: bool = False,
+    training_compat: bool = False,
 ) -> None:
     state = flow_state.pop(flow_key, None)
     if state is None or not state["packets"]:
@@ -142,6 +154,7 @@ def process_and_maybe_flush(
         state["protocol"],
         state["start_time"],
         state["packets"],
+        training_compat=training_compat,
     )
 
     if debug:
@@ -215,6 +228,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--no-pipeline", action="store_true", help="Build FlowData only and skip the detection pipeline")
     parser.add_argument("--debug", action="store_true", help="Print debug information for packet handling")
+    parser.add_argument(
+        "--training-compat",
+        action="store_true",
+        help="Use training-compatible preprocessing (strip Ethernet, zero IPs, 8-packet 128B/pkt format)",
+    )
     return parser
 
 
@@ -275,6 +293,7 @@ def get_default_windows_iface() -> str | None:
 def capture_flows(args: argparse.Namespace) -> None:
     pipeline = DetectionPipeline() if not args.no_pipeline else None
     flow_state: dict[tuple[str, str, int, int, str], dict] = {}
+    training_compat: bool = getattr(args, "training_compat", False)
 
     # Diagnostics: print available interfaces and pcap/provider status
     try:
@@ -310,7 +329,7 @@ def capture_flows(args: argparse.Namespace) -> None:
             key for key, state in flow_state.items() if now - state["last_seen"] >= args.flow_idle_timeout
         ]
         for key in expired_keys:
-            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
+            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug, training_compat)
 
     captured_packets = {"count": 0}
 
@@ -353,7 +372,7 @@ def capture_flows(args: argparse.Namespace) -> None:
             )
 
         if len(state["packets"]) >= args.max_packets_per_flow:
-            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
+            process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug, training_compat)
         else:
             flush_idle_flows()
 
@@ -409,7 +428,7 @@ def capture_flows(args: argparse.Namespace) -> None:
 
     _emit("capture_stop", {"reason": "finished", "remaining_flows": len(flow_state)})
     for key in list(flow_state.keys()):
-        process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug)
+        process_and_maybe_flush(key, flow_state, pipeline, args.max_packets_per_flow, args.no_pipeline, args.debug, training_compat)
 
 
 def main() -> None:
